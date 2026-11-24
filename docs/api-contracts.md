@@ -42,8 +42,8 @@ Password: 8–128 chars. Email must be unique (409 on duplicate).
 ```
 
 Rotation: the presented refresh token is revoked and replaced. Reusing a
-revoked token revokes the whole token family (possible theft) and returns
-401.
+revoked token returns 401. (Whole-family revocation on detected reuse is a
+future hardening step, not implemented.)
 
 ### POST /auth/logout
 
@@ -56,13 +56,13 @@ Auth required. Returns the current user. `200`.
 
 ## Users
 
-### GET /users/me — same as `/auth/me`.
+### GET /users/me — same as `/auth/me`. (Not built; use `GET /auth/me`.)
 
-### PATCH /users/me
+### PATCH /users/me — planned, not built yet
 
 Auth required. `{ "displayName": "…", "avatarUrl": "…" }`. `200` user.
 
-### GET /users/search?q=…
+### GET /users/search?q=… — planned, not built yet
 
 Auth required. Finds registered users by email/display name (for invites).
 `200` `{ "users": [ { "id", "email", "displayName", "avatarUrl" } ] }`.
@@ -75,7 +75,8 @@ are listed per route.
 ### GET /workspaces
 
 Auth required. Workspaces the user belongs to.
-`200` `{ "workspaces": [ { "id", "name", "description", "role", "memberCount", "createdAt" } ] }`.
+`200` a JSON array of `{ "id", "name", "description", "ownerId", "role",
+"createdAt", "updatedAt" }`. (The `role` is the caller's role.)
 
 ### POST /workspaces
 
@@ -93,46 +94,55 @@ Requires OWNER or ADMIN. `{ "name", "description" }`. `200` workspace.
 
 ### DELETE /workspaces/{workspaceId}
 
-Requires OWNER. `204 No Content`. Deletes the workspace and its members,
-invitations, documents, channels, messages, tasks (cascade).
+Requires OWNER. `204 No Content`. Deletes the workspace and its members
+and invitations (cascade).
 
 ### POST /workspaces/{workspaceId}/leave
 
-Requires membership; OWNER cannot leave while other members exist (transfer
-ownership first — `409`). `204 No Content`.
+Requires membership; OWNER cannot leave (transfer ownership first, or
+delete the workspace — `409`). `204 No Content`.
+
+### POST /workspaces/{workspaceId}/transfer
+
+Requires OWNER. `{ "newOwnerId": "…" }` — the new owner must already be a
+member. The old owner becomes ADMIN, the new owner becomes OWNER.
+`200` workspace (with the caller's new role, `ADMIN`).
 
 ### GET /workspaces/{workspaceId}/members
 
-Requires membership. `200` `{ "members": [ { "userId", "email",
-"displayName", "role", "joinedAt" } ] }`.
+Requires membership. `200` a JSON array of `{ "userId", "email",
+"displayName", "role", "joinedAt" }`.
 
-### PATCH /workspaces/{workspaceId}/members/{userId}
+### PATCH /workspaces/{workspaceId}/members/{userId} — planned, not built yet
 
 Requires OWNER or ADMIN. `{ "role": "ADMIN" | "MEMBER" | "VIEWER" }`.
 OWNER role cannot be granted this way. `200` member.
 
 ### DELETE /workspaces/{workspaceId}/members/{userId}
 
-Requires OWNER or ADMIN. Cannot remove the OWNER or yourself. `204`.
+Requires OWNER or ADMIN. Cannot remove the OWNER or yourself (use leave).
+An admin cannot remove another admin. `204`.
 
 ### POST /workspaces/{workspaceId}/invitations
 
-Requires OWNER or ADMIN. `{ "email": "…", "role": "MEMBER",
-"expiresInHours": 72 }`. Creates an expiring invitation and (for a
-registered user) a notification. `201` `{ "invitation": { "id", "email",
-"role", "expiresAt" }, "inviteUrl": "…/join?token=…" }`. The raw token is
-returned once, at creation; only its hash is stored.
+Requires OWNER or ADMIN. `{ "email": "…", "role": "ADMIN" | "MEMBER" |
+"VIEWER" }` — OWNER cannot be granted by invitation. Invitations expire
+after 72h (configurable). `201` `{ "id", "workspaceId", "email", "role",
+"expiresAt", "token" }`. The raw token is returned once, at creation; only
+its SHA-256 hash is stored. (No email is sent yet — the inviter shares the
+link; email delivery lands with notifications.)
 
-### GET /workspaces/{workspaceId}/invitations
+### GET /workspaces/{workspaceId}/invitations — planned, not built yet
 
 Requires OWNER or ADMIN. Lists pending invitations. `200`.
 
-### POST /invitations/accept
+### POST /workspaces/invitations/{token}/accept
 
-Auth required. `{ "token": "…" }`. Validates the token, expiry, and that
-the caller's email matches the invitation (or the invitation is open).
-Adds the caller as a member with the invited role. `200` workspace.
-`410` if expired, `404` if unknown.
+Auth required. Validates the token, expiry, and that the caller's email
+matches the invitation. Adds the caller as a member with the invited role.
+`200` workspace. `401` if the token is unknown, `409` if expired, already
+used, or the caller is already a member, `403` if the invitation was sent
+to a different email address.
 
 ## Documents (metadata; content sync is Yjs — see websocket-events.md)
 

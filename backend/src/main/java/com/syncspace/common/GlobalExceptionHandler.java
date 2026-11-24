@@ -41,6 +41,24 @@ public class GlobalExceptionHandler {
                 .body(Map.of("error", new ApiError("CONFLICT", ex.getMessage())));
     }
 
+    @ExceptionHandler(InvalidCredentialsException.class)
+    public ResponseEntity<Map<String, ApiError>> handleInvalidCredentials(InvalidCredentialsException ex) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(Map.of("error", new ApiError("UNAUTHORIZED", ex.getMessage())));
+    }
+
+    @ExceptionHandler(ForbiddenException.class)
+    public ResponseEntity<Map<String, ApiError>> handleForbidden(ForbiddenException ex) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(Map.of("error", new ApiError("FORBIDDEN", ex.getMessage())));
+    }
+
+    @ExceptionHandler(NotFoundException.class)
+    public ResponseEntity<Map<String, ApiError>> handleNotFound(NotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("error", new ApiError("NOT_FOUND", ex.getMessage())));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, ApiError>> handleUnexpected(Exception ex) {
         log.error("Unexpected error", ex);

@@ -1,9 +1,11 @@
 package com.syncspace.common;
 
+import com.syncspace.auth.JwtService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -20,6 +22,10 @@ class HealthControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    // SecurityConfig wires the JWT filter, which needs a JwtService bean.
+    @MockitoBean
+    private JwtService jwtService;
 
     @Test
     void healthReturnsOk() throws Exception {

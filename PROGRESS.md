@@ -14,15 +14,23 @@ roadmap compressed:
 
 ## Milestones
 
-### Foundation + Auth + Workspaces (in progress)
+### Foundation + Auth + Workspaces — DONE Nov 24, 2026 (5 commits)
 
-- [ ] Monorepo structure, Docker Compose, Nginx, env templates
-- [ ] Angular scaffold + landing/login/register shell + backend health check
-- [ ] Spring Boot scaffold + Flyway V1 (users, refresh_tokens, workspaces, workspace_members, workspace_invitations)
-- [ ] Auth: registration, login/logout, BCrypt, JWT access + refresh rotation
-- [ ] Workspaces: CRUD, membership, roles, expiring invitations, authorization
-- [ ] Docs: architecture, database design, API contracts, WebSocket events
-- [ ] CI workflow (backend + frontend)
+- [x] Monorepo structure, Docker Compose, Nginx, env templates
+- [x] Angular scaffold + landing/login/register shell + backend health check
+- [x] Spring Boot scaffold + Flyway V1 (users, refresh_tokens, workspaces, workspace_members, workspace_invitations)
+- [x] Auth: registration, login/logout, BCrypt, JWT access + refresh rotation
+- [x] Workspaces: CRUD, membership, roles, expiring invitations, authorization
+- [x] Docs: architecture, database design, API contracts, WebSocket events
+- [x] CI workflow (backend + frontend)
+
+Commits (branch `feature/project-foundation` for 1–3, `feature/auth-workspaces` for 4–5 — see git log):
+
+1. `bec2b2b` project-foundation: monorepo layout, docs, CI, Docker Compose, collab server scaffold
+2. `b5f226d` backend-foundation: Spring Boot scaffold, Flyway V1, health endpoint, security baseline
+3. `2d94aeb` frontend-shell: Angular app, Material theme, auth pages, dashboard, backend status probe
+4. `119bf19` auth: JWT registration/login, refresh rotation, protected routes
+5. workspaces: CRUD, roles, invitations, dashboard wiring (SHA in git log)
 
 ## Architecture decisions
 
@@ -48,11 +56,61 @@ roadmap compressed:
 - Docker containers are blocked in this VM (`setns: operation not
   permitted`), so `docker compose up` cannot be verified here. Compose file
   syntax is validated; the live run must be verified on a developer machine.
+- **Build-VM network quirks (all fixed in-tree, see below):**
+  - Maven could not reach Maven Central until the JDK truststore gained the
+    egress CA bundle, `~/.m2/settings.xml` pointed at the `hatch-egress-proxy`
+    (root's `/root/.m2/settings.xml` is the one Maven reads), and
+    `-Djava.net.preferIPv6Addresses=true` was set (Java TCP to 127.0.0.1 is
+    intercepted by the sandbox egress redirect; `::1` reaches local services).
+    The flag is in `backend/.mvn/jvm.config` and the surefire `argLine`.
+  - Local apt PostgreSQL 16 serves SSL with a self-signed snakeoil cert, so
+    the dev JDBC URL uses `sslmode=disable` (Docker Postgres has SSL off).
+    The dev URL also uses `[::1]` instead of `localhost` for the reason above.
+    Docker Compose overrides the URL via `SPRING_DATASOURCE_URL`.
+  - Spring Boot 3.4.1 manages Flyway 10.20.1, which rejects PostgreSQL 16.
+    The pom pins Flyway 11.16.0 and adds `flyway-database-postgresql`
+    (Flyway 10+ ships database support separately).
+  - PostgreSQL 16 was installed via apt and is running locally on port 5432
+    (database/user `syncspace`); the backend was verified live against it.
 
 ## Known issues
 
-- (none yet — updated as work lands)
+- **CI workflow not pushed/verified.** `.github/workflows/ci.yml` is in the
+  repo (commit 1) but the Muse GitHub App cannot push workflow files
+  (GitHub 403, seen on RouteMind). It must be added by hand on github.com
+  or pushed from a machine with workflow permission; it has not run yet.
+- **No email delivery yet.** Invitation tokens are returned in the API
+  response for the inviter to share; email sending lands with notifications.
+- **Whole-family refresh-token revocation on reuse is not implemented** —
+  reuse of a revoked token is rejected with 401, but sibling tokens are not
+  revoked.
+- **Frontend bundle budget warning:** initial bundle 573 kB vs the 500 kB
+  budget (Angular Material). Warning only; the build passes.
+- **Live `docker compose up` not verified in this VM** (containers blocked);
+  verify on a developer machine before claiming the stack runs end to end.
+- **GitHub issues/PRs not created yet.** The first issue-creation attempt
+  timed out waiting for approval (approval expired, nothing was created).
+  Issues #1–#4 and the PRs must be created once the GitHub write is
+  approved — the local branches carry the work.
 
 ## Verification log
 
-- (build/test results recorded per milestone as they land)
+- **Nov 24, 2026 — Day 1 complete.**
+  - Backend `./mvnw test`: **34/34 pass** (health slice, auth service/JWT/
+    controller/integration, workspace service/integration).
+  - Frontend `npm run build`: passes (one bundle-budget warning, 573 kB).
+    `npm test -- --watch=false`: **4/4 pass** (app shell, dashboard).
+  - Live backend boot against local PostgreSQL 16: `GET /api/v1/health`
+    → `{"status":"ok","service":"syncspace-backend"}`, actuator 200,
+    Flyway V1 applied (users, refresh_tokens, workspaces,
+    workspace_members, workspace_invitations). Live register/login
+    exercised with curl; anonymous `/me` correctly returns 401.
+  - `docker-compose.yml` validated by YAML parse (6 services, pgdata +
+    redisdata volumes). `docker compose up` NOT run (blocked in this VM).
+  - Full auth + workspace flow verified by `WorkspaceIntegrationTest`
+    (create → invite → accept → role checks → transfer → delete).
+  - Live end-to-end through the Angular dev server (`npm start`, proxy
+    to the backend): register → 201, create workspace → 201 (OWNER),
+    list workspaces/members → correct, anonymous list → 401. (Found and
+    fixed during this check: `proxy.conf.json` was never referenced —
+    `angular.json` now sets `serve.options.proxyConfig`.)
