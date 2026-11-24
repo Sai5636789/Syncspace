@@ -1,0 +1,33 @@
+.landing {
+  max-width: 760px;
+  text-align: center;
+}
+
+.landing h1 {
+  font-size: 3rem;
+  margin-bottom: 8px;
+}
+
+.tagline {
+  font-size: 1.25rem;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin: 24px 0 40px;
+}
+
+.features {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  text-align: left;
+}
+
+.backend-line {
+  margin-top: 32px;
+  color: var(--mat-sys-on-surface-variant);
+}

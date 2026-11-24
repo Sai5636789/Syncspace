@@ -1,0 +1,54 @@
+<div class="page-center">
+  <div class="landing">
+    <h1>SyncSpace</h1>
+    <p class="tagline">One workspace for your whole team — documents, chat, and tasks, live.</p>
+    <p>
+      Edit shared documents together, talk in channels, and move work across a Kanban board.
+      Every change appears for everyone instantly, and everything persists.
+    </p>
+
+    <div class="actions">
+      @if (auth.isAuthenticated) {
+        <a mat-raised-button color="primary" routerLink="/dashboard">Open your dashboard</a>
+      } @else {
+        <a mat-raised-button color="primary" routerLink="/register">Create an account</a>
+        <a mat-stroked-button routerLink="/login">Log in</a>
+      }
+    </div>
+
+    <div class="features">
+      <mat-card>
+        <mat-card-header>
+          <mat-icon mat-card-avatar>description</mat-icon>
+          <mat-card-title>Collaborative documents</mat-card-title>
+        </mat-card-header>
+        <mat-card-content>Real-time rich-text editing with live cursors, powered by Yjs CRDTs.</mat-card-content>
+      </mat-card>
+      <mat-card>
+        <mat-card-header>
+          <mat-icon mat-card-avatar>chat</mat-icon>
+          <mat-card-title>Team messaging</mat-card-title>
+        </mat-card-header>
+        <mat-card-content>Channels, typing indicators, and message history that never disappears.</mat-card-content>
+      </mat-card>
+      <mat-card>
+        <mat-card-header>
+          <mat-icon mat-card-avatar>view_kanban</mat-icon>
+          <mat-card-title>Kanban board</mat-card-title>
+        </mat-card-header>
+        <mat-card-content>Drag-and-drop tasks with live updates for the whole workspace.</mat-card-content>
+      </mat-card>
+    </div>
+
+    <p class="backend-line">
+      Backend status:
+      @if (backendOk() === true) {
+        <span class="status-ok">connected</span>
+      } @else if (backendOk() === false) {
+        <span class="status-bad">offline — start the backend to use SyncSpace</span>
+      } @else {
+        <span>checking…</span>
+      }
+    </p>
+  </div>
+</div>

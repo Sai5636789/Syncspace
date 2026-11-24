@@ -1,0 +1,13 @@
+<div class="page">
+  <h1>Welcome back, {{ auth.currentUser()?.displayName }}</h1>
+  <p class="subtitle">Signed in as {{ auth.currentUser()?.email }}</p>
+
+  <mat-card>
+    <mat-card-header>
+      <mat-card-title>Your workspaces</mat-card-title>
+    </mat-card-header>
+    <mat-card-content>
+      <p>You are not a member of any workspace yet.</p>
+    </mat-card-content>
+  </mat-card>
+</div>
