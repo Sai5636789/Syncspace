@@ -1,0 +1,38 @@
+spring:
+  application:
+    name: syncspace-backend
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/syncspace}
+    username: ${SPRING_DATASOURCE_USERNAME:syncspace}
+    password: ${SPRING_DATASOURCE_PASSWORD:syncspace_dev_password}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info
+  endpoint:
+    health:
+      show-details: when-authorized
+
+server:
+  port: 8080
+
+syncspace:
+  jwt:
+    # Override with JWT_SECRET in any shared environment. At least 32 chars.
+    secret: ${JWT_SECRET:change-me-to-a-long-random-secret-at-least-32-chars}
+    access-ttl-minutes: ${JWT_ACCESS_TTL_MINUTES:15}
+    refresh-ttl-days: ${JWT_REFRESH_TTL_DAYS:7}
+  invitations:
+    default-expiry-hours: 72

@@ -1,0 +1,33 @@
+<mat-toolbar color="primary">
+  <a class="logo" mat-button routerLink="/">SyncSpace</a>
+  <span class="spacer"></span>
+  <span class="backend-status" [attr.data-status]="backendOk() === null ? 'checking' : backendOk() ? 'online' : 'offline'">
+    @if (backendOk() === null) {
+      Checking backend…
+    } @else if (backendOk()) {
+      Backend online
+    } @else {
+      Backend offline
+    }
+  </span>
+  @if (auth.isAuthenticated) {
+    <a mat-button routerLink="/dashboard">Dashboard</a>
+    <button mat-button [matMenuTriggerFor]="userMenu">
+      <mat-icon>account_circle</mat-icon>
+      {{ auth.currentUser()?.displayName }}
+    </button>
+    <mat-menu #userMenu="matMenu">
+      <button mat-menu-item (click)="logout()">
+        <mat-icon>logout</mat-icon>
+        <span>Log out</span>
+      </button>
+    </mat-menu>
+  } @else {
+    <a mat-button routerLink="/login">Log in</a>
+    <a mat-raised-button color="accent" routerLink="/register">Sign up</a>
+  }
+</mat-toolbar>
+
+<main>
+  <router-outlet />
+</main>
