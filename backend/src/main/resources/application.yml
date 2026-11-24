@@ -2,7 +2,10 @@ spring:
   application:
     name: syncspace-backend
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/syncspace}
+    # [::1]: this VM intercepts Java TCP to 127.0.0.1 (sandbox egress
+    # redirect) — IPv6 loopback reaches the real local Postgres. Docker
+    # overrides the URL via SPRING_DATASOURCE_URL, so this is local-only.
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://[::1]:5432/syncspace?sslmode=disable}
     username: ${SPRING_DATASOURCE_USERNAME:syncspace}
     password: ${SPRING_DATASOURCE_PASSWORD:syncspace_dev_password}
   jpa:
