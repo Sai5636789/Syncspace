@@ -8,3 +8,28 @@
   color: var(--mat-sys-on-surface-variant, #5f6368);
   margin-top: -8px;
 }
+
+.create-card {
+  margin-bottom: 16px;
+}
+
+.full-width {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.error {
+  color: var(--mat-sys-error, #b3261e);
+  margin: 8px 0;
+}
+
+.workspace-list {
+  list-style: none;
+  padding: 0;
+}
+
+.workspace-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
