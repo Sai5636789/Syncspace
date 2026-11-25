@@ -451,4 +451,53 @@ class MessagingIntegrationTest {
 
         session.disconnect();
     }
+
+    @Test
+    void disconnectedClientRecoversMissedMessagesFromRestHistoryAfterReconnect() throws Exception {
+        String ownerEmail = uniqueEmail("reconnect-owner");
+        String memberEmail = uniqueEmail("reconnect-member");
+        String ownerToken = register(ownerEmail, "Owner");
+        String memberToken = register(memberEmail, "Member");
+        String workspaceId = createWorkspace(ownerToken, "Reconnect WS");
+        inviteAndAccept(ownerToken, workspaceId, memberEmail, memberToken);
+
+        ResponseEntity<List> channels = rest.exchange(
+                "/api/v1/workspaces/" + workspaceId + "/channels", HttpMethod.GET,
+                authEntity(ownerToken), List.class);
+        String generalId = (String) ((Map<?, ?>) channels.getBody().get(0)).get("id");
+
+        // Owner connects, subscribes, then drops off.
+        StompSession ownerSession = connect(ownerToken);
+        MapFrameHandler beforeDisconnect = new MapFrameHandler();
+        waitForSubscription(ownerSession, "/topic/workspaces/" + workspaceId + "/messages",
+                beforeDisconnect);
+        ownerSession.disconnect();
+
+        // While the owner is offline, the member sends a message. It is
+        // persisted even though nobody is listening for the owner.
+        StompSession memberSession = connect(memberToken);
+        sendChat(memberSession, workspaceId, generalId, UUID.randomUUID().toString(),
+                "While you were away");
+        waitForHistorySize(generalId, ownerToken, 1);
+
+        // Owner reconnects and re-subscribes. The simple broker never
+        // replays, so the missed message must NOT arrive over STOMP...
+        StompSession reconnected = connect(ownerToken);
+        MapFrameHandler afterReconnect = new MapFrameHandler();
+        waitForSubscription(reconnected, "/topic/workspaces/" + workspaceId + "/messages",
+                afterReconnect);
+        assertThat(afterReconnect.frames.poll(1, TimeUnit.SECONDS)).isNull();
+
+        // ...but REST history — the recovery source — returns it.
+        ResponseEntity<Map> history = rest.exchange(
+                "/api/v1/channels/" + generalId + "/messages?page=0&size=50",
+                HttpMethod.GET, authEntity(ownerToken), Map.class);
+        assertThat(history.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(history.getBody().get("totalElements")).isEqualTo(1);
+        assertThat(((Map<?, ?>) ((List<?>) history.getBody().get("content")).get(0)).get("body"))
+                .isEqualTo("While you were away");
+
+        memberSession.disconnect();
+        reconnected.disconnect();
+    }
 }
