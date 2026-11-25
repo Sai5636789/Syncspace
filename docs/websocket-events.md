@@ -8,8 +8,7 @@ protocol — never full-document replacement over STOMP.
 ## Connection
 
 - STOMP endpoint: `ws://<host>/ws/` (through Nginx; direct backend
-  `ws://localhost:8080/ws/`). SockJS fallback is enabled for browsers
-  without native WebSocket support.
+  `ws://localhost:8080/ws/`). Native WebSocket only — no SockJS fallback.
 - Authentication: the STOMP `CONNECT` frame carries
   `Authorization: Bearer <access-token>` in its headers. The backend
   validates the JWT and binds the session to the user. Unauthenticated

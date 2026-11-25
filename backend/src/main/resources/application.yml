@@ -8,6 +8,14 @@ spring:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://[::1]:5432/syncspace?sslmode=disable}
     username: ${SPRING_DATASOURCE_USERNAME:syncspace}
     password: ${SPRING_DATASOURCE_PASSWORD:syncspace_dev_password}
+  # Redis is transport only (Pub/Sub fan-out, presence, cache) — never the
+  # durable store. Default host ::1: this VM intercepts Java TCP to
+  # 127.0.0.1 (sandbox egress redirect); IPv6 loopback reaches the real
+  # local Redis. Docker Compose overrides via SPRING_REDIS_HOST=redis.
+  data:
+    redis:
+      host: ${SPRING_REDIS_HOST:::1}
+      port: ${SPRING_REDIS_PORT:6379}
   jpa:
     hibernate:
       ddl-auto: validate

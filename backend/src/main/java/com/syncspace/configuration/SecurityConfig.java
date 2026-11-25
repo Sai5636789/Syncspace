@@ -35,6 +35,9 @@ public class SecurityConfig {
                                 "/api/v1/auth/refresh", "/api/v1/auth/logout")
                         .permitAll()
                         .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
+                        // /ws is permitted at the HTTP layer: STOMP auth is
+                        // enforced by StompAuthChannelInterceptor on CONNECT.
+                        .requestMatchers("/ws/**").permitAll()
                         .anyRequest().authenticated())
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();

@@ -7,7 +7,7 @@ roadmap compressed:
 
 | Slice | Date | Scope (original days) | Status |
 | --- | --- | --- | --- |
-| Foundation + Auth + Workspaces | Tue Nov 24 | 1–2 | In progress |
+| Foundation + Auth + Workspaces | Tue Nov 24 | 1–2 | Done — on GitHub, both PRs merged |
 | WebSocket infrastructure + Messaging | Wed Nov 25 | 3–4 | Not started |
 | Collaborative documents + Presence | Thu Nov 26 | 5–6 | Not started |
 | Kanban + Notifications + Dashboard + Testing + Delivery | Fri Nov 27 | 7–10 | Not started |
@@ -88,10 +88,10 @@ Commits (branch `feature/project-foundation` for 1–3, `feature/auth-workspaces
   budget (Angular Material). Warning only; the build passes.
 - **Live `docker compose up` not verified in this VM** (containers blocked);
   verify on a developer machine before claiming the stack runs end to end.
-- **GitHub issues/PRs not created yet.** The first issue-creation attempt
-  timed out waiting for approval (approval expired, nothing was created).
-  Issues #1–#4 and the PRs must be created once the GitHub write is
-  approved — the local branches carry the work.
+- **GitHub: foundation + auth + workspaces fully merged Nov 24, 2026.**
+  All 5 commits are on `main` (HEAD `fdeab4cc`), PR #5 and PR #6 merged,
+  issues #1–#4 closed. Note: the connector pushes file snapshots, not git
+  history, so the 5 local commits appear as snapshot commits on GitHub.
 
 ## Verification log
 
@@ -114,3 +114,7 @@ Commits (branch `feature/project-foundation` for 1–3, `feature/auth-workspaces
     list workspaces/members → correct, anonymous list → 401. (Found and
     fixed during this check: `proxy.conf.json` was never referenced —
     `angular.json` now sets `serve.options.proxyConfig`.)
+  - GitHub push verified Nov 24, 2026 ~19:44 EST: all 5 commits on `main`
+    (HEAD `fdeab4cc`), PR #5 (merge `5d99cc99`) and PR #6 (merge `fdeab4cc`)
+    merged, issues #1–#4 closed. Next slice (WebSocket infrastructure +
+    Messaging) starts only on Sai's approval.
