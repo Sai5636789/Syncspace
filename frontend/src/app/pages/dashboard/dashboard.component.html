@@ -43,6 +43,9 @@
               <button mat-button (click)="select(workspace)">
                 {{ workspace.name }} — {{ workspace.role }}
               </button>
+              <a mat-button color="primary" [routerLink]="['/workspaces', workspace.id, 'chat']">
+                Team Chat
+              </a>
               @if (workspace.role !== 'OWNER') {
                 <button mat-button color="warn" (click)="leave(workspace)">Leave</button>
               }
