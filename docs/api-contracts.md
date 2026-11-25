@@ -170,10 +170,50 @@ Requires MEMBER or above. `204`. Deletes metadata, updates, snapshots.
 ## Channels and messages (implemented with the messaging slice)
 
 ### GET /workspaces/{workspaceId}/channels — membership required.
+`200` a JSON array of `{ "id", "workspaceId", "name", "description",
+"createdById", "unreadCount", "createdAt", "updatedAt" }`. `unreadCount`
+is the caller's unread messages in that channel: messages created after
+the caller's last read, excluding the caller's own messages; with no read
+pointer it counts all messages not authored by the caller.
+
 ### POST /workspaces/{workspaceId}/channels — MEMBER or above.
-### GET /channels/{channelId}/messages?before=<cursor>&limit=50 — membership required, cursor-paginated.
-### PATCH /messages/{messageId} — author only, within edit window.
-### DELETE /messages/{messageId} — author or ADMIN+; soft delete.
+`{ "name": "…" (max 80 chars), "description": "…" }`. `201` channel.
+Duplicate name in the workspace → `409`. Every workspace is created with
+a default `general` channel.
+
+### POST /channels/{channelId}/read — membership required.
+Marks the channel read for the caller. `200`
+`{ "channelId": "…", "lastReadAt": "…" }`.
+
+### GET /channels/{channelId}/messages?page=0&size=50 — membership required.
+Page/size paginated, chronological (page 0 holds the oldest messages).
+`200` `{ "content": [ { "id", "channelId", "workspaceId", "authorId",
+"authorDisplayName", "clientMessageId", "body", "editedAt", "deletedAt",
+"createdAt", "updatedAt" } ], "page", "size", "totalElements",
+"totalPages" }`. Default size 50, maximum 100. Soft-deleted messages are
+excluded from history entirely.
+
+### PATCH /messages/{messageId} — author only, `{ "body": "…" }` (max
+10000 chars). Sets `editedAt`. `200` message. `403` otherwise.
+
+### DELETE /messages/{messageId} — author or ADMIN+. Soft delete.
+`204`. A MESSAGE_DELETED event is broadcast.
+
+### STOMP chat
+- Send: `/app/workspaces/{workspaceId}/chat` with
+  `{ channelId, clientMessageId, body }`. The sender gets a MESSAGE_SENT
+  envelope on `/user/queue/acknowledgements`
+  (`payload: { status: "SENT" | "DUPLICATE", message }`); a duplicate
+  `clientMessageId` returns the existing message with no second broadcast.
+  The MESSAGE_CREATED broadcast goes to
+  `/topic/workspaces/{workspaceId}/messages` after the DB commit.
+- Typing: `/app/workspaces/{workspaceId}/typing` with
+  `{ channelId, typing: true | false }` → TYPING_STARTED / TYPING_STOPPED
+  on `/topic/workspaces/{workspaceId}/typing` (ephemeral, not persisted).
+- Acks: `/app/workspaces/{workspaceId}/ack` with `{ messageId }` →
+  a MESSAGE_ACKNOWLEDGED envelope (`payload: { messageId, status:
+  "ACKED" }`) on `/user/queue/acknowledgements` (best-effort, not
+  persisted).
 
 ## Tasks (implemented with the Kanban slice)
 

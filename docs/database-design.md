@@ -168,6 +168,20 @@ Constraints: `UNIQUE(channel_id, client_message_id)` (duplicate prevention).
 Indexes: `messages(channel_id, created_at DESC)`,
 `messages(workspace_id, created_at DESC)`.
 
+### channel_reads
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| user_id | UUID FK → users, ON DELETE CASCADE | part of the PK |
+| channel_id | UUID FK → channels, ON DELETE CASCADE | part of the PK |
+| last_read_at | TIMESTAMPTZ, NOT NULL | instant the user last marked the channel read |
+
+PK: `(user_id, channel_id)`. No `created_at`/`updated_at`: the row is a
+read pointer, `last_read_at` is its state. Unread count for a user is the
+number of non-deleted messages in the channel created after
+`last_read_at` and not authored by that user (all of them, when no row
+exists).
+
 ### tasks
 
 | Column | Type | Notes |
@@ -251,8 +265,11 @@ to Redis and marks `published_at`.
 
 - `V1__foundation.sql` — users, refresh_tokens, workspaces,
   workspace_members, workspace_invitations.
-- `V2__documents.sql` — documents, document_updates, document_snapshots.
-- `V3__messaging.sql` — channels, messages.
+- `V2__messaging.sql` — channels, messages, channel_reads. (The original
+  plan listed V2 as documents; documents are not built yet, so messaging
+  took V2 and documents will take a later number.)
+- `V3__documents.sql` — documents, document_updates, document_snapshots
+  (when the documents slice lands; number may shift — see V2 note).
 - `V4__tasks.sql` — tasks, task_activity.
 - `V5__notifications_audit.sql` — notifications, audit_logs.
 - `V6__outbox.sql` — outbox_events (stretch, only when implemented).

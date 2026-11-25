@@ -7,8 +7,8 @@ roadmap compressed:
 
 | Slice | Date | Scope (original days) | Status |
 | --- | --- | --- | --- |
-| Foundation + Auth + Workspaces | Tue Nov 24 | 1–2 | In progress |
-| WebSocket infrastructure + Messaging | Wed Nov 25 | 3–4 | Not started |
+| Foundation + Auth + Workspaces | Tue Nov 24 | 1–2 | Done — on GitHub, both PRs merged |
+| WebSocket infrastructure + Messaging | Wed Nov 25 | 3–4 | Done — backend verified live (see below); frontend slice is a parallel worktree |
 | Collaborative documents + Presence | Thu Nov 26 | 5–6 | Not started |
 | Kanban + Notifications + Dashboard + Testing + Delivery | Fri Nov 27 | 7–10 | Not started |
 
@@ -31,6 +31,77 @@ Commits (branch `feature/project-foundation` for 1–3, `feature/auth-workspaces
 3. `2d94aeb` frontend-shell: Angular app, Material theme, auth pages, dashboard, backend status probe
 4. `119bf19` auth: JWT registration/login, refresh rotation, protected routes
 5. workspaces: CRUD, roles, invitations, dashboard wiring (SHA in git log)
+
+### WebSocket infrastructure + Messaging (backend) — DONE Nov 25, 2026 (2 commits, branch `feature/websocket-infra`)
+
+- [x] STOMP endpoint `/ws` (native WebSocket, no SockJS), JWT auth on
+  CONNECT, membership-checked subscriptions, 60 msgs/min rate limit
+- [x] Event envelope + `RealtimeEventPublisher`: local broadcast via
+  `SimpMessagingTemplate` and Redis Pub/Sub fan-out on `syncspace-events`
+  (best-effort, at-least-once, consumers dedupe on `eventId`)
+- [x] Flyway V2: `channels`, `messages` (soft delete, idempotency on
+  `(channel_id, client_message_id)`), `channel_reads` (read pointers)
+- [x] Channels + messages REST: list/create channels (unread counts,
+  duplicate name 409), mark read, paginated history (chronological,
+  page 0 = oldest), edit (author only), soft delete (author or ADMIN+)
+- [x] STOMP chat/typing/ack: idempotent send (duplicate
+  `clientMessageId` returns the existing message, no second broadcast),
+  ephemeral typing, best-effort acks; broadcasts only after DB commit
+- [x] Default `general` channel seeded on workspace creation
+- [x] Docs: messaging contracts in `api-contracts.md`, event table +
+  Redis fan-out section in `websocket-events.md`, V2 tables in
+  `database-design.md`
+
+Commits (branch `feature/websocket-infra`):
+
+1. `9e6131a` websocket-infra: STOMP endpoint, JWT CONNECT auth,
+   subscription authorization, Redis Pub/Sub fan-out
+2. messaging: channels, messages, idempotency, unread tracking, REST +
+   STOMP delivery (SHA in git log)
+
+Decisions where the docs were ambiguous (see also `docs/api-contracts.md`):
+
+- Soft-deleted messages are excluded from history entirely (no deleted flag).
+- History pages are chronological ASC (page 0 = oldest); `size` is
+  clamped to 100 rather than rejected.
+- `unreadCount` excludes the caller's own messages; with no read pointer
+  it counts all non-own messages.
+- `POST /channels/{id}/read` returns 200 `{channelId, lastReadAt}`.
+- Ack queue carries `RealtimeEvent` envelopes uniformly: `MESSAGE_SENT`
+  (`payload {status: SENT|DUPLICATE, message}`) and
+  `MESSAGE_ACKNOWLEDGED` (`payload {messageId, status: "ACKED"}`).
+- A truly concurrent duplicate `clientMessageId` may surface as 409;
+  retrying then returns the existing message.
+- Migration numbering: V2 is messaging (the plan listed V2 as
+  documents); documents take a later number.
+- Max message body 10,000 chars (STOMP + REST).
+
+Live-probe findings, both fixed in this slice (not left as known issues):
+
+- **CONNECT auth rejected spec-style headers.** The STOMP decoder keeps
+  header values verbatim, so a client writing `Authorization: Bearer
+  <token>` (space after the colon, as in every STOMP example) arrived as
+  `" Bearer <token>"` and failed the `startsWith("Bearer ")` check.
+  Spring's own client writes no space, so unit/integration tests never
+  saw it; a raw Python STOMP client did. Fixed: the interceptor trims
+  the header value; regression test added
+  (`connectWithSpaceAfterColonBindsPrincipal`).
+- **Redis outage stalled chat acks and REST responses.** Lettuce queues
+  commands while reconnecting, so a synchronous Redis publish during an
+  outage blocked the caller up to the 60 s command timeout (observed:
+  PATCH edit hung past a 10 s client timeout; MESSAGE_SENT ack delayed).
+  Fixed: the Redis publish now runs on a bounded single-thread executor
+  (queue 100, discard policy), never on the caller's thread. A first
+  attempt at failing fast globally (Lettuce `REJECT_COMMANDS`) was
+  reverted: it made the listener container's startup subscribe fail and
+  took the whole context down.
+- **The app did not start with Redis down.** The listener container's
+  initial connect is synchronous, so `start()` threw and the failed bean
+  start failed the context (the old comment claiming otherwise was
+  wrong). Fixed: the container is no longer auto-started
+  (`isAutoStartup()` overridden — there is no setter); a
+  `RealtimeListenerBootstrap` starts it on `ApplicationReadyEvent` and
+  retries every 5 s on a daemon thread until Redis answers.
 
 ## Architecture decisions
 
@@ -72,6 +143,22 @@ Commits (branch `feature/project-foundation` for 1–3, `feature/auth-workspaces
     (Flyway 10+ ships database support separately).
   - PostgreSQL 16 was installed via apt and is running locally on port 5432
     (database/user `syncspace`); the backend was verified live against it.
+- **The build VM resets between sessions (observed Nov 25, 2026):**
+  PostgreSQL's data directory is wiped (only the `postgres` superuser
+  remains — recreate the `syncspace` user/database with the repo-default
+  password), `/tmp` is cleared (probe scripts, Maven-built state), and
+  `pip` installs disappear (reinstall `websocket-client` for the STOMP
+  probe). Postgres/Redis daemons also stop; restart both before testing.
+  If integration tests fail with "password authentication failed for user
+  syncspace" or "Connection to [::1]:5432 refused", check this first.
+- **Shell footguns in this VM:** `pkill -f <pattern>` matches the calling
+  shell's own command line when the pattern text appears later in the same
+  command — it SIGTERMs your own shell. Kill by PID (`fuser -k
+  <port>/tcp` for the server) or keep the pattern and the target in
+  separate commands. `spring-boot:run` arguments are space-separated, not
+  comma-separated: `-Dspring-boot.run.arguments="--server.port=18080
+  --logging.level.x=DEBUG"`; a comma-joined value is treated as one
+  argument and breaks `server.port` parsing.
 
 ## Known issues
 
@@ -88,10 +175,10 @@ Commits (branch `feature/project-foundation` for 1–3, `feature/auth-workspaces
   budget (Angular Material). Warning only; the build passes.
 - **Live `docker compose up` not verified in this VM** (containers blocked);
   verify on a developer machine before claiming the stack runs end to end.
-- **GitHub issues/PRs not created yet.** The first issue-creation attempt
-  timed out waiting for approval (approval expired, nothing was created).
-  Issues #1–#4 and the PRs must be created once the GitHub write is
-  approved — the local branches carry the work.
+- **GitHub: foundation + auth + workspaces fully merged Nov 24, 2026.**
+  All 5 commits are on `main` (HEAD `fdeab4cc`), PR #5 and PR #6 merged,
+  issues #1–#4 closed. Note: the connector pushes file snapshots, not git
+  history, so the 5 local commits appear as snapshot commits on GitHub.
 
 ## Verification log
 
@@ -114,3 +201,37 @@ Commits (branch `feature/project-foundation` for 1–3, `feature/auth-workspaces
     list workspaces/members → correct, anonymous list → 401. (Found and
     fixed during this check: `proxy.conf.json` was never referenced —
     `angular.json` now sets `serve.options.proxyConfig`.)
+  - GitHub push verified Nov 24, 2026 ~19:44 EST: all 5 commits on `main`
+    (HEAD `fdeab4cc`), PR #5 (merge `5d99cc99`) and PR #6 (merge `fdeab4cc`)
+    merged, issues #1–#4 closed. Next slice (WebSocket infrastructure +
+    Messaging) starts only on Sai's approval.
+
+- **Nov 25, 2026 — WebSocket infrastructure + Messaging backend complete.**
+  - Backend `./mvnw test`: **69/69 pass** (51 after the websocket-infra
+    commit — 34 Day 1 + 17 new realtime tests; +18 messaging tests in the
+    second commit, including the CONNECT header-space regression test).
+    New tests: `MessagingServiceTest` (13, Mockito), `MessagingIntegrationTest`
+    (3, real DB + real STOMP client), `RealtimeEventPublisherTest` (5),
+    `StompAuthChannelInterceptorTest` (9), `RealtimeIntegrationTest` (4).
+  - Live backend boot on port 18080 against local PostgreSQL 16 + Redis
+    (both restarted after a VM reset wiped the Postgres data dir):
+    Flyway V1+V2 applied. A raw Python STOMP probe (`websocket-client`,
+    no Spring client) exercised register → login → create workspace
+    (general channel seeded) → create channel → invite/accept member →
+    STOMP chat → duplicate send → typing → ack → REST history/edit/delete/
+    mark-read: **18/18 checks pass**, including MESSAGE_CREATED broadcast
+    to both sessions, MESSAGE_SENT SENT/DUPLICATE acks, TYPING_STARTED
+    with display name, MESSAGE_UPDATED/MESSAGE_DELETED broadcasts,
+    unreadCount 1 → 0 after mark-read, history totalElements 1 after
+    delete. A `redis-cli subscribe syncspace-events` listener captured
+    every event type published by the backend (MESSAGE_CREATED ×2,
+    MESSAGE_UPDATED, MESSAGE_DELETED, TYPING_STARTED,
+    MESSAGE_ACKNOWLEDGED) — backend→Redis fan-out verified live.
+  - Redis-down behavior verified live: with Redis stopped mid-run the
+    same 18/18 probe passes in ~4 s (local broadcast, acks, and REST all
+    responsive — no 60 s stall after the async-publish fix). The backend
+    also **starts** with Redis down (health OK; listener bootstrap logs
+    the retry warning) and fan-out resumes when Redis returns (fresh
+    subscriber captures all event types; probe 18/18 again).
+  - Not verified live in this VM: multi-instance fan-out (needs two
+    backend instances) and `docker compose up` (containers blocked).
