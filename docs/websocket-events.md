@@ -55,6 +55,8 @@ Every STOMP message body is JSON with this envelope:
 | `MESSAGE_CREATED` | `{ channelId, message: { id, authorId, body, createdAt, clientMessageId } }` | New chat message (persisted first) |
 | `MESSAGE_UPDATED` | `{ channelId, message }` | Author edited a message |
 | `MESSAGE_DELETED` | `{ channelId, messageId }` | Message soft-deleted |
+| `MESSAGE_SENT` | `{ status: "SENT" \| "DUPLICATE", message }` | Sent to the sender's `/user/queue/acknowledgements` after a chat send |
+| `MESSAGE_ACKNOWLEDGED` | `{ messageId, status: "ACKED" }` | Sent to `/user/queue/acknowledgements` after an `/ack` (best-effort, not persisted) |
 | `TYPING_STARTED` / `TYPING_STOPPED` | `{ channelId, userId, displayName }` | Typing indicator (ephemeral, not persisted) |
 | `TASK_CREATED` | `{ task }` | New task |
 | `TASK_UPDATED` | `{ task }` | Task edited/moved (payload carries new `version`) |
@@ -105,6 +107,17 @@ The server sends each `MESSAGE_CREATED` with a `messageId`. Clients
 acknowledge receipt by sending to `/app/workspaces/{id}/ack` with
 `{ messageId }`; the server records delivery for the sender's UI. Acks are
 best-effort and never block delivery.
+
+## Redis fan-out (multi-instance)
+
+Events are broadcast locally and also published to the `syncspace-events`
+Redis Pub/Sub channel so other backend instances can broadcast them to
+their own sessions. The Redis publish is best-effort and never blocks the
+caller: it runs on a bounded single-thread executor, so if Redis is down
+the event is still broadcast locally, a warning is logged, and the publish
+fails in the background (or is dropped if the executor queue is full)
+instead of stalling the request. The listener retries in the background,
+so fan-out resumes when Redis returns.
 
 ## Rate limiting and payload limits
 

@@ -4,11 +4,13 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.UUID;
+import java.util.concurrent.Executor;
 
 /**
  * Publishes committed domain events to connected clients.
@@ -27,6 +29,16 @@ import java.util.UUID;
  * listener ignores messages that originated on this instance. The wrapper
  * never reaches clients — they only ever see the envelope.
  *
+ * <p>"Best-effort" is enforced, not just intended: the Redis publish runs
+ * on a bounded single-thread executor (see {@code RedisRealtimeConfig}),
+ * never on the caller's thread. Lettuce queues commands while it
+ * reconnects, so a synchronous publish during an outage would stall the
+ * caller — chat acks, REST responses — for up to the 60 s command
+ * timeout; here the caller only ever pays for the local broadcast, and
+ * the background publish fails fast, logs a warning, and is dropped if
+ * the executor's queue is full. Fan-out resumes on its own when Redis
+ * comes back.
+ *
  * <p>Callers must publish only after the database transaction commits
  * (see the {@code afterCommit} hook in the messaging service).
  */
@@ -41,15 +53,18 @@ public class RealtimeEventPublisher {
     private final SimpMessagingTemplate messagingTemplate;
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
+    private final Executor redisPublishExecutor;
     private final String instanceId = UUID.randomUUID().toString();
 
     public RealtimeEventPublisher(
             SimpMessagingTemplate messagingTemplate,
             StringRedisTemplate redisTemplate,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            @Qualifier("realtimePublishExecutor") Executor redisPublishExecutor) {
         this.messagingTemplate = messagingTemplate;
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
+        this.redisPublishExecutor = redisPublishExecutor;
     }
 
     /** Broadcast to an explicit STOMP destination and fan out on Redis. */
@@ -95,12 +110,23 @@ public class RealtimeEventPublisher {
 
     private void publishToRedis(RealtimeEvent event, String destination) {
         try {
-            String json = objectMapper.writeValueAsString(
-                    new RedisEnvelope(instanceId, destination, event));
-            redisTemplate.convertAndSend(REDIS_CHANNEL, json);
+            // Runs off the caller's thread: a Redis outage must never stall
+            // the local broadcast or the request that triggered the publish.
+            redisPublishExecutor.execute(() -> {
+                try {
+                    String json = objectMapper.writeValueAsString(
+                            new RedisEnvelope(instanceId, destination, event));
+                    redisTemplate.convertAndSend(REDIS_CHANNEL, json);
+                } catch (Exception ex) {
+                    // Best-effort: the local broadcast above already went out.
+                    log.warn("Redis Pub/Sub publish failed (event still broadcast locally): {}",
+                            ex.getMessage());
+                }
+            });
         } catch (Exception ex) {
-            // Best-effort: the local broadcast above already went out.
-            log.warn("Redis Pub/Sub publish failed (event still broadcast locally): {}", ex.getMessage());
+            // The executor itself refused the task (queue full); same deal.
+            log.warn("Redis Pub/Sub publish dropped (event still broadcast locally): {}",
+                    ex.getMessage());
         }
     }
 

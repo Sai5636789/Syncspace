@@ -5,6 +5,7 @@ import com.syncspace.auth.User;
 import com.syncspace.auth.UserRepository;
 import com.syncspace.common.ForbiddenException;
 import com.syncspace.common.NotFoundException;
+import com.syncspace.messaging.ChannelRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -40,6 +41,9 @@ class WorkspaceServiceTest {
     @Mock
     private AuthService authService;
 
+    @Mock
+    private ChannelRepository channels;
+
     private WorkspaceService service;
     private User owner;
     private User member;
@@ -47,7 +51,7 @@ class WorkspaceServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new WorkspaceService(workspaces, members, invitations, users, authService, 72);
+        service = new WorkspaceService(workspaces, members, invitations, users, authService, channels, 72);
         owner = user("owner@example.com");
         member = user("member@example.com");
         workspace = new Workspace("Team", "desc", owner);
@@ -78,6 +82,21 @@ class WorkspaceServiceTest {
 
         assertThat(dto.role()).isEqualTo(WorkspaceRole.OWNER);
         verify(members).save(any(WorkspaceMember.class));
+        verify(channels).save(any(com.syncspace.messaging.Channel.class));
+    }
+
+    @Test
+    void createSeedsGeneralChannel() {
+        when(users.findById(owner.getId())).thenReturn(Optional.of(owner));
+
+        service.create(owner.getId(), "Team", "desc");
+
+        org.mockito.ArgumentCaptor<com.syncspace.messaging.Channel> channel =
+                org.mockito.ArgumentCaptor.forClass(com.syncspace.messaging.Channel.class);
+        verify(channels).save(channel.capture());
+        assertThat(channel.getValue().getName()).isEqualTo("general");
+        assertThat(channel.getValue().getWorkspace().getName()).isEqualTo("Team");
+        assertThat(channel.getValue().getWorkspace().getOwner()).isEqualTo(owner);
     }
 
     @Test

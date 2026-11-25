@@ -94,6 +94,21 @@ class StompAuthChannelInterceptorTest {
     }
 
     @Test
+    void connectWithSpaceAfterColonBindsPrincipal() {
+        // Regression: the STOMP decoder keeps the header value verbatim, so a
+        // client that writes "Authorization: Bearer <token>" (space after the
+        // colon) arrives as " Bearer <token>". That must still authenticate.
+        when(jwtService.parseUserId("good-token")).thenReturn(Optional.of(userId));
+
+        Message<?> result = interceptor.preSend(connectMessage(" Bearer good-token"), null);
+
+        assertThat(result).isNotNull();
+        StompHeaderAccessor accessor = StompHeaderAccessor.wrap(result);
+        assertThat(accessor.getUser()).isNotNull();
+        assertThat(accessor.getUser().getName()).isEqualTo(userId.toString());
+    }
+
+    @Test
     void connectWithoutAuthorizationIsRejected() {
         assertThatThrownBy(() -> interceptor.preSend(connectMessage(null), null))
                 .isInstanceOf(MessagingException.class);

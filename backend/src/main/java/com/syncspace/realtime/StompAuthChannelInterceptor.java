@@ -100,7 +100,15 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
     }
 
     private Message<?> authenticateConnect(StompHeaderAccessor accessor, Message<?> message) {
+        // The STOMP decoder preserves the header value verbatim, so a client
+        // that writes "Authorization: Bearer <token>" (space after the colon,
+        // as in every STOMP example) arrives with a leading space, while
+        // Spring's own encoder writes "Authorization:Bearer <token>". Trim so
+        // both spellings authenticate.
         String authorization = accessor.getFirstNativeHeader("Authorization");
+        if (authorization != null) {
+            authorization = authorization.trim();
+        }
         if (authorization == null || !authorization.startsWith("Bearer ")) {
             throw new MessagingException("Missing Authorization header on CONNECT");
         }

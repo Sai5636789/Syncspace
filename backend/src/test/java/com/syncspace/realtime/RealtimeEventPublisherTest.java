@@ -39,7 +39,10 @@ class RealtimeEventPublisherTest {
         objectMapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
-        publisher = new RealtimeEventPublisher(messagingTemplate, redisTemplate, objectMapper);
+        // Direct executor: publishes run synchronously in tests so the
+        // Mockito verifications below are deterministic.
+        publisher = new RealtimeEventPublisher(messagingTemplate, redisTemplate, objectMapper,
+                Runnable::run);
     }
 
     private RealtimeEvent event() {

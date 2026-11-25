@@ -6,6 +6,8 @@ import com.syncspace.auth.UserRepository;
 import com.syncspace.common.ForbiddenException;
 import com.syncspace.common.InvalidCredentialsException;
 import com.syncspace.common.NotFoundException;
+import com.syncspace.messaging.Channel;
+import com.syncspace.messaging.ChannelRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,6 +36,7 @@ public class WorkspaceService {
     private final WorkspaceInvitationRepository invitations;
     private final UserRepository users;
     private final AuthService authService;
+    private final ChannelRepository channels;
     private final long invitationExpiryHours;
 
     public WorkspaceService(
@@ -42,12 +45,14 @@ public class WorkspaceService {
             WorkspaceInvitationRepository invitations,
             UserRepository users,
             AuthService authService,
+            ChannelRepository channels,
             @Value("${syncspace.invitations.default-expiry-hours:72}") long invitationExpiryHours) {
         this.workspaces = workspaces;
         this.members = members;
         this.invitations = invitations;
         this.users = users;
         this.authService = authService;
+        this.channels = channels;
         this.invitationExpiryHours = invitationExpiryHours;
     }
 
@@ -57,6 +62,9 @@ public class WorkspaceService {
         Workspace workspace = new Workspace(name.trim(), description == null ? null : description.trim(), owner);
         workspaces.save(workspace);
         members.save(new WorkspaceMember(workspace, owner, WorkspaceRole.OWNER));
+        // Every workspace starts with a default "general" channel, seeded in
+        // the same transaction as the workspace and its owner membership.
+        channels.save(new Channel(workspace, "general", "General discussion", owner));
         return toDto(workspace, WorkspaceRole.OWNER);
     }
 

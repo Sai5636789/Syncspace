@@ -2,6 +2,7 @@ package com.syncspace.common;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -39,6 +40,15 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, ApiError>> handleIllegalState(IllegalStateException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(Map.of("error", new ApiError("CONFLICT", ex.getMessage())));
+    }
+
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<Map<String, ApiError>> handleDataIntegrity(DataIntegrityViolationException ex) {
+        // A unique-constraint conflict that raced past the pre-check
+        // (duplicate channel name, duplicate idempotency key). Never leaks
+        // the constraint or SQL text to the client.
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("error", new ApiError("CONFLICT", "The request conflicts with existing data")));
     }
 
     @ExceptionHandler(InvalidCredentialsException.class)
