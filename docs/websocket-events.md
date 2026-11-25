@@ -7,8 +7,8 @@ protocol — never full-document replacement over STOMP.
 
 ## Connection
 
-- STOMP endpoint: `ws://<host>/ws/` (through Nginx; direct backend
-  `ws://localhost:8080/ws/`). Native WebSocket only — no SockJS fallback.
+- STOMP endpoint: `ws://<host>/ws` (through Nginx; direct backend
+  `ws://localhost:8080/ws`). Native WebSocket only — no SockJS fallback.
 - Authentication: the STOMP `CONNECT` frame carries
   `Authorization: Bearer <access-token>` in its headers. The backend
   validates the JWT and binds the session to the user. Unauthenticated
@@ -50,6 +50,12 @@ Every STOMP message body is JSON with this envelope:
 
 ## Event types
 
+Implemented in the messaging slice: `MESSAGE_CREATED`,
+`MESSAGE_UPDATED`, `MESSAGE_DELETED`, `MESSAGE_SENT`,
+`MESSAGE_ACKNOWLEDGED`, `TYPING_STARTED` / `TYPING_STOPPED`, and
+`ERROR`. The remaining types below are planned — their slices have not
+landed yet, so no server code publishes them.
+
 | Event type | Payload | Meaning |
 | --- | --- | --- |
 | `MESSAGE_CREATED` | `{ channelId, message: { id, authorId, body, createdAt, clientMessageId } }` | New chat message (persisted first) |
@@ -58,35 +64,38 @@ Every STOMP message body is JSON with this envelope:
 | `MESSAGE_SENT` | `{ status: "SENT" \| "DUPLICATE", message }` | Sent to the sender's `/user/queue/acknowledgements` after a chat send |
 | `MESSAGE_ACKNOWLEDGED` | `{ messageId, status: "ACKED" }` | Sent to `/user/queue/acknowledgements` after an `/ack` (best-effort, not persisted) |
 | `TYPING_STARTED` / `TYPING_STOPPED` | `{ channelId, userId, displayName }` | Typing indicator (ephemeral, not persisted) |
-| `TASK_CREATED` | `{ task }` | New task |
-| `TASK_UPDATED` | `{ task }` | Task edited/moved (payload carries new `version`) |
-| `TASK_DELETED` | `{ taskId }` | Task removed |
-| `PRESENCE_CHANGED` | `{ userId, status: "online" \| "offline", lastSeenAt }` | Presence update |
-| `DOCUMENT_UPDATED` | `{ documentId, title, updatedAt, version }` | Document metadata changed (content sync is Yjs) |
-| `NOTIFICATION_CREATED` | `{ notification }` | New notification for the user |
-| `MEMBER_JOINED` / `MEMBER_LEFT` / `MEMBER_ROLE_CHANGED` | `{ userId, role? }` | Membership change |
-| `WORKSPACE_UPDATED` | `{ workspace }` | Workspace renamed / edited |
+| `TASK_CREATED` | `{ task }` | New task (planned — Kanban slice, not built yet) |
+| `TASK_UPDATED` | `{ task }` | Task edited/moved (payload carries new `version`) (planned — Kanban slice, not built yet) |
+| `TASK_DELETED` | `{ taskId }` | Task removed (planned — Kanban slice, not built yet) |
+| `PRESENCE_CHANGED` | `{ userId, status: "online" \| "offline", lastSeenAt }` | Presence update (planned — documents + presence slice, not built yet) |
+| `DOCUMENT_UPDATED` | `{ documentId, title, updatedAt, version }` | Document metadata changed (content sync is Yjs) (planned — documents slice, not built yet) |
+| `NOTIFICATION_CREATED` | `{ notification }` | New notification for the user (planned — notifications slice, not built yet) |
+| `MEMBER_JOINED` / `MEMBER_LEFT` / `MEMBER_ROLE_CHANGED` | `{ userId, role? }` | Membership change (planned, not built yet) |
+| `WORKSPACE_UPDATED` | `{ workspace }` | Workspace renamed / edited (planned, not built yet) |
 | `ERROR` | `{ code, message }` | Sent to `/user/queue/errors` |
 
 ## Destinations
 
-Application (client → server):
+Application (client → server) — only `chat`, `typing`, and `ack` are
+implemented; `presence` is planned (documents + presence slice):
 
 ```text
 /app/workspaces/{workspaceId}/chat        send a message (payload: { channelId, clientMessageId, body })
 /app/workspaces/{workspaceId}/typing      typing indicator
-/app/workspaces/{workspaceId}/presence    heartbeat / presence ping
+/app/workspaces/{workspaceId}/ack         delivery acknowledgement (payload: { messageId })
+/app/workspaces/{workspaceId}/presence    heartbeat / presence ping (planned, not built yet)
 ```
 
-Subscription (server → client):
+Subscription (server → client) — `/messages` and `/typing` topics are
+implemented; the others are planned and have no publisher yet:
 
 ```text
 /topic/workspaces/{workspaceId}/messages
-/topic/workspaces/{workspaceId}/tasks
-/topic/workspaces/{workspaceId}/presence
 /topic/workspaces/{workspaceId}/typing
-/topic/workspaces/{workspaceId}/documents
-/topic/workspaces/{workspaceId}/members
+/topic/workspaces/{workspaceId}/tasks        (planned — Kanban slice)
+/topic/workspaces/{workspaceId}/presence     (planned — documents + presence slice)
+/topic/workspaces/{workspaceId}/documents    (planned — documents slice)
+/topic/workspaces/{workspaceId}/members      (planned)
 /user/queue/notifications
 /user/queue/acknowledgements
 /user/queue/errors
@@ -105,8 +114,10 @@ require authentication only.
 
 The server sends each `MESSAGE_CREATED` with a `messageId`. Clients
 acknowledge receipt by sending to `/app/workspaces/{id}/ack` with
-`{ messageId }`; the server records delivery for the sender's UI. Acks are
-best-effort and never block delivery.
+`{ messageId }`; the server replies with a `MESSAGE_ACKNOWLEDGED`
+envelope on the acking user's own `/user/queue/acknowledgements`. Acks
+are best-effort and never block delivery; nothing about the ack is
+persisted.
 
 ## Redis fan-out (multi-instance)
 
@@ -123,9 +134,11 @@ so fan-out resumes when Redis returns.
 
 - STOMP message size limit: 64 KB per frame (documents go through Yjs,
   not STOMP).
-- Per-connection rate limit: 60 application messages per minute; exceeding
-  it returns an `ERROR` frame (`RATE_LIMITED`) and the connection is
-  throttled.
+- Per-connection rate limit: 60 application messages per minute in a
+  fixed 60-second window, counted per STOMP session. An over-limit frame
+  is dropped and a `RATE_LIMITED` error is sent to the sender's
+  `/user/queue/errors`; the connection stays open — it is not throttled
+  or closed.
 - Payloads are validated (Bean Validation on the server); invalid frames
   return `ERROR` (`VALIDATION_FAILED`) and are dropped.
 

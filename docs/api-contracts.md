@@ -144,7 +144,7 @@ matches the invitation. Adds the caller as a member with the invited role.
 used, or the caller is already a member, `403` if the invitation was sent
 to a different email address.
 
-## Documents (metadata; content sync is Yjs — see websocket-events.md)
+## Documents (planned — not built yet; metadata only, content sync is Yjs — see websocket-events.md)
 
 ### GET /workspaces/{workspaceId}/documents
 
@@ -177,9 +177,11 @@ the caller's last read, excluding the caller's own messages; with no read
 pointer it counts all messages not authored by the caller.
 
 ### POST /workspaces/{workspaceId}/channels — MEMBER or above.
-`{ "name": "…" (max 80 chars), "description": "…" }`. `201` channel.
-Duplicate name in the workspace → `409`. Every workspace is created with
-a default `general` channel.
+`{ "name": "…" (max 80 chars), "description": "…" (max 2000 chars) }`.
+`201` channel. Duplicate name in the workspace → `409`; blank name →
+`400`. Every workspace is created with a default `general` channel.
+Non-members get `404` on channel routes (workspace existence is not
+leaked).
 
 ### POST /channels/{channelId}/read — membership required.
 Marks the channel read for the caller. `200`
@@ -194,10 +196,12 @@ Page/size paginated, chronological (page 0 holds the oldest messages).
 excluded from history entirely.
 
 ### PATCH /messages/{messageId} — author only, `{ "body": "…" }` (max
-10000 chars). Sets `editedAt`. `200` message. `403` otherwise.
+10000 chars, blank rejected with `400`). Sets `editedAt`. `200` message.
+`403` for a non-author, `404` for an unknown message id.
 
 ### DELETE /messages/{messageId} — author or ADMIN+. Soft delete.
-`204`. A MESSAGE_DELETED event is broadcast.
+`204`. A MESSAGE_DELETED event is broadcast. `403` for a non-author
+below ADMIN, `404` for an unknown message id.
 
 ### STOMP chat
 - Send: `/app/workspaces/{workspaceId}/chat` with

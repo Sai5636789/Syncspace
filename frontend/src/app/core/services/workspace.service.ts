@@ -34,6 +34,10 @@ export class WorkspaceService {
     return this.http.get<Workspace[]>(this.apiUrl);
   }
 
+  get(workspaceId: string): Observable<Workspace> {
+    return this.http.get<Workspace>(`${this.apiUrl}/${workspaceId}`);
+  }
+
   create(name: string, description: string | null): Observable<Workspace> {
     return this.http.post<Workspace>(this.apiUrl, { name, description });
   }

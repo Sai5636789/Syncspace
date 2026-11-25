@@ -8,7 +8,7 @@ roadmap compressed:
 | Slice | Date | Scope (original days) | Status |
 | --- | --- | --- | --- |
 | Foundation + Auth + Workspaces | Tue Nov 24 | 1–2 | Done — on GitHub, both PRs merged |
-| WebSocket infrastructure + Messaging | Wed Nov 25 | 3–4 | Done — backend verified live (see below); frontend slice is a parallel worktree |
+| WebSocket infrastructure + Messaging | Wed Nov 25 | 3–4 | Done — backend + frontend merged (`3d015d8`), tests + docs complete (see below) |
 | Collaborative documents + Presence | Thu Nov 26 | 5–6 | Not started |
 | Kanban + Notifications + Dashboard + Testing + Delivery | Fri Nov 27 | 7–10 | Not started |
 
@@ -103,6 +103,73 @@ Live-probe findings, both fixed in this slice (not left as known issues):
   `RealtimeListenerBootstrap` starts it on `ApplicationReadyEvent` and
   retries every 5 s on a daemon thread until Redis answers.
 
+### WebSocket infrastructure + Messaging — COMPLETE Nov 25, 2026 (frontend + tests + docs)
+
+Backend (`feature/websocket-infra`) and frontend (`1dc3469`,
+`feature/messaging-frontend`) were merged into `feature/messaging-frontend`
+at `3d015d8`, then finished with a reconnect-recovery test commit and a
+docs-alignment commit (SHAs in git log).
+
+- [x] Team Chat page: channel list with unread badges, message history
+  (chronological, page/size), optimistic sends with echo dedup, inline
+  edit (author only) with confirm-before-delete, typing indicators
+- [x] STOMP client service: native WebSocket at `/ws` (no SockJS), bearer
+  token on CONNECT, exponential backoff reconnect (1s → 30s cap, jitter),
+  re-subscribe + `reconnected$` → REST history recovery, token refresh
+  once on auth STOMP error, event dedup on `eventId`, typing timeout
+- [x] Reconnect-recovery integration test: a client that disconnects
+  recovers messages sent while it was offline from REST history after
+  reconnecting (the STOMP simple broker never replays, so no broadcast
+  is expected on the fresh subscription)
+- [x] Docs aligned to the implemented surface: `websocket-events.md`
+  (endpoint `/ws`, no SockJS; MESSAGE_SENT / MESSAGE_ACKNOWLEDGED;
+  rate limit as implemented; unbuilt event types and destinations
+  marked planned), `api-contracts.md` (full channels/messages
+  endpoints, page/size history, PATCH/DELETE rules and error codes;
+  documents marked planned), `database-design.md` verified against
+  V2 already correct — no change needed
+
+Commits on `feature/messaging-frontend` (see git log for SHAs):
+
+1. `1dc3469` messaging-frontend: Team Chat page, STOMP client, typing,
+   unread badges
+2. `9e6131a` + `bbd657e` (merged via `3d015d8`) websocket-infra +
+   messaging backend (see the backend section above)
+3. `9c35015` tests: reconnect recovery and subscription-rejection
+   coverage for messaging (1 new integration test; the other checklist
+   items — persistence + dedup, CONNECT auth rejection, non-member
+   subscription rejection, frontend chat component tests — already had
+   real coverage and were verified, not duplicated)
+4. docs: websocket-events and api-contracts to the implemented
+   messaging surface (SHA in git log)
+
+Decisions for the slice (see also the backend section above):
+
+- Page/size pagination over cursor pagination; history chronological
+  ASC (page 0 = oldest); `size` clamped to 100, negative page is 400.
+- Native WebSocket at `/ws`, no SockJS.
+- A `general` channel is seeded at workspace creation.
+- Redis publish is best-effort: local broadcast always happens, fan-out
+  resumes when Redis returns; the backend also starts with Redis down.
+- Soft-deleted messages are excluded from history entirely.
+- Max message body 10,000 chars (STOMP + REST).
+
+Verification (Nov 25, 2026, merged worktree):
+
+- Backend `./mvnw test`: **70/70 pass** (69 + the new reconnect-recovery
+  integration test).
+- Frontend `npm test -- --watch=false`: **29/29 pass** (12 STOMP
+  service, 9 ChatComponent, 4 REST service, 4 pre-existing); no new
+  frontend tests were needed — the reconnect-recovery path is covered
+  by the STOMP service reconnect test and the ChatComponent
+  "recovers from REST after a reconnect" test.
+- Frontend `npm run build`: passes; initial bundle **646.02 kB** vs the
+  500 kB budget (warning only — up from 573 kB on Nov 24 with the chat
+  code and its dependencies).
+- Not re-run live in the merged worktree: the 18/18 raw-STOMP probe
+  from the backend section (behavior unchanged since; covered by the
+  integration suite instead).
+
 ## Architecture decisions
 
 - **Modular monolith + dedicated Yjs service.** Spring Boot owns business
@@ -143,6 +210,16 @@ Live-probe findings, both fixed in this slice (not left as known issues):
     (Flyway 10+ ships database support separately).
   - PostgreSQL 16 was installed via apt and is running locally on port 5432
     (database/user `syncspace`); the backend was verified live against it.
+- **Maven needs two things after a VM reset (rediscovered Nov 25, 2026):**
+  `JAVA_HOME=/home/hatch/.local/jdk21` (Temurin JDK — its truststore
+  holds the egress CA) and `/root/.m2/settings.xml` (proxy config).
+  Maven reads root's settings file, not `~/.m2/settings.xml`, so after
+  a reset restore it from `/home/hatch/.m2/settings.xml` (the copy that
+  survives) before running anything: `sudo cp
+  /home/hatch/.m2/settings.xml /root/.m2/settings.xml` (or equivalent).
+  Without them Maven fails with "Non-resolvable parent POM" / SSL
+  errors — check these two first. Run backend tests as
+  `JAVA_HOME=/home/hatch/.local/jdk21 ./mvnw test` from `backend/`.
 - **The build VM resets between sessions (observed Nov 25, 2026):**
   PostgreSQL's data directory is wiped (only the `postgres` superuser
   remains — recreate the `syncspace` user/database with the repo-default
@@ -171,10 +248,15 @@ Live-probe findings, both fixed in this slice (not left as known issues):
 - **Whole-family refresh-token revocation on reuse is not implemented** —
   reuse of a revoked token is rejected with 401, but sibling tokens are not
   revoked.
-- **Frontend bundle budget warning:** initial bundle 573 kB vs the 500 kB
-  budget (Angular Material). Warning only; the build passes.
+- **Frontend bundle budget warning:** initial bundle 646 kB vs the 500 kB
+  budget (Angular Material + chat code; was 573 kB on Nov 24). Warning
+  only; the build passes.
 - **Live `docker compose up` not verified in this VM** (containers blocked);
   verify on a developer machine before claiming the stack runs end to end.
+- **Multi-instance Redis fan-out not verified live** (needs two backend
+  instances; single-instance publish to `syncspace-events` was captured
+  with `redis-cli subscribe`, and local broadcast + resume-after-Redis-down
+  were verified — see the Nov 25 verification log).
 - **GitHub: foundation + auth + workspaces fully merged Nov 24, 2026.**
   All 5 commits are on `main` (HEAD `fdeab4cc`), PR #5 and PR #6 merged,
   issues #1–#4 closed. Note: the connector pushes file snapshots, not git

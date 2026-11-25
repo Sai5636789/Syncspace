@@ -1,0 +1,164 @@
+<div class="page">
+  <div class="chat-header">
+    <div>
+      <a mat-button routerLink="/dashboard">← Dashboard</a>
+      <h1>{{ workspaceName() || 'Team Chat' }}</h1>
+    </div>
+    <span
+      class="connection-status"
+      [attr.data-status]="stompStatus()"
+      role="status"
+    >
+      <span class="dot" aria-hidden="true"></span>
+      @if (stompStatus() === 'connected') {
+        Connected
+      } @else if (stompStatus() === 'reconnecting') {
+        Reconnecting…
+      } @else {
+        Offline
+        <button mat-button (click)="retryConnection()">Retry</button>
+      }
+    </span>
+  </div>
+
+  @if (error()) {
+    <p class="error" role="alert">{{ error() }}</p>
+  }
+
+  @if (loading()) {
+    <p>Loading channels…</p>
+  } @else {
+    <div class="chat-layout">
+      <mat-card class="channel-list">
+        <mat-card-header>
+          <mat-card-title>Channels</mat-card-title>
+        </mat-card-header>
+        <mat-card-content>
+          <ul>
+            @for (channel of channels(); track channel.id) {
+              <li>
+                <button
+                  mat-button
+                  class="channel-button"
+                  [class.active]="selectedChannel()?.id === channel.id"
+                  [matBadge]="channel.unreadCount"
+                  [matBadgeHidden]="channel.unreadCount === 0"
+                  matBadgeColor="accent"
+                  (click)="selectChannel(channel)"
+                >
+                  # {{ channel.name }}
+                </button>
+              </li>
+            }
+          </ul>
+          @if (channels().length === 0) {
+            <p>No channels yet. Create the first one below.</p>
+          }
+          @if (showCreateChannel()) {
+            <form [formGroup]="createChannelForm" (ngSubmit)="createChannel()">
+              <mat-form-field appearance="outline" class="full-width">
+                <mat-label>Channel name</mat-label>
+                <input matInput formControlName="name" required maxlength="80" />
+              </mat-form-field>
+              <mat-form-field appearance="outline" class="full-width">
+                <mat-label>Description (optional)</mat-label>
+                <input matInput formControlName="description" />
+              </mat-form-field>
+              <button mat-raised-button color="primary" type="submit" [disabled]="creatingChannel()">
+                {{ creatingChannel() ? 'Creating…' : 'Create channel' }}
+              </button>
+              <button mat-button type="button" (click)="showCreateChannel.set(false)">Cancel</button>
+            </form>
+          } @else {
+            <button mat-button color="primary" (click)="showCreateChannel.set(true)">
+              <mat-icon>add</mat-icon> New channel
+            </button>
+          }
+        </mat-card-content>
+      </mat-card>
+
+      <mat-card class="message-panel">
+        @if (selectedChannel()) {
+          <mat-card-header>
+            <mat-card-title># {{ selectedChannel()?.name }}</mat-card-title>
+            @if (selectedChannel()?.description) {
+              <mat-card-subtitle>{{ selectedChannel()?.description }}</mat-card-subtitle>
+            }
+          </mat-card-header>
+          <mat-card-content>
+            <div #messageList class="message-list" (scroll)="onMessagesScroll()">
+              @if (messages().length === 0) {
+                <p class="empty">No messages yet. Say hello to the team.</p>
+              }
+              @for (message of messages(); track message.id) {
+                <div class="message" [class.own]="isOwn(message)" [class.pending]="message.pending">
+                  <div class="message-meta">
+                    <strong>{{ displayName(message) }}</strong>
+                    <span class="timestamp">{{ message.createdAt }}</span>
+                    @if (message.editedAt) {
+                      <span class="edited">(edited)</span>
+                    }
+                    @if (message.pending) {
+                      <span class="pending-label">Sending…</span>
+                    }
+                  </div>
+                  @if (message.deletedAt) {
+                    <p class="deleted-body">This message was deleted.</p>
+                  } @else if (editingId() === message.id) {
+                    <form [formGroup]="editForm" (ngSubmit)="saveEdit(message)" class="edit-form">
+                      <mat-form-field appearance="outline" class="full-width">
+                        <mat-label>Edit message</mat-label>
+                        <input matInput formControlName="body" required maxlength="4000" />
+                      </mat-form-field>
+                      <button mat-raised-button color="primary" type="submit">Save</button>
+                      <button mat-button type="button" (click)="cancelEdit()">Cancel</button>
+                    </form>
+                  } @else {
+                    <p class="message-body">{{ message.body }}</p>
+                    @if (isOwn(message)) {
+                      <div class="message-actions">
+                        <button mat-button (click)="startEdit(message)">Edit</button>
+                        <button mat-button color="warn" (click)="deleteMessage(message)">
+                          {{ confirmDeleteId() === message.id ? 'Confirm delete' : 'Delete' }}
+                        </button>
+                      </div>
+                    }
+                  }
+                </div>
+              }
+            </div>
+            @if (typingText()) {
+              <p class="typing" role="status">{{ typingText() }}</p>
+            }
+            <form [formGroup]="composer" (ngSubmit)="sendMessage()" class="composer">
+              <mat-form-field appearance="outline" class="composer-field">
+                <mat-label>Message #{{ selectedChannel()?.name }}</mat-label>
+                <input
+                  matInput
+                  formControlName="body"
+                  required
+                  maxlength="4000"
+                  autocomplete="off"
+                  (input)="onComposerInput()"
+                />
+              </mat-form-field>
+              <button
+                mat-raised-button
+                color="primary"
+                type="submit"
+                [disabled]="composer.invalid || sending()"
+                aria-label="Send message"
+              >
+                <mat-icon>send</mat-icon> Send
+              </button>
+            </form>
+          </mat-card-content>
+        } @else {
+          <mat-card-content>
+            <p>Select a channel to start chatting.</p>
+          </mat-card-content>
+        }
+      </mat-card>
+    </div>
+  }
+</div>
