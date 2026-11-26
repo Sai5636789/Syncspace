@@ -9,7 +9,7 @@ roadmap compressed:
 | --- | --- | --- | --- |
 | Foundation + Auth + Workspaces | Tue Nov 24 | 1–2 | Done — on GitHub, both PRs merged |
 | WebSocket infrastructure + Messaging | Wed Nov 25 | 3–4 | Done — backend + frontend merged (`3d015d8`), tests + docs complete (see below) |
-| Collaborative documents + Presence | Thu Nov 26 | 5–6 | Not started |
+| Collaborative documents + Presence | Thu Nov 26 | 5–6 | Documents done (backend + collab server, this branch); presence is a separate slice, not started here |
 | Kanban + Notifications + Dashboard + Testing + Delivery | Fri Nov 27 | 7–10 | Not started |
 
 ## Milestones
@@ -169,6 +169,111 @@ Verification (Nov 25, 2026, merged worktree):
 - Not re-run live in the merged worktree: the 18/18 raw-STOMP probe
   from the backend section (behavior unchanged since; covered by the
   integration suite instead).
+
+### Collaborative documents (backend + Yjs sync server) — DONE Nov 26, 2026 (2 commits, branch `feature/collaborative-docs`)
+
+- [x] Flyway V3: `documents` (optimistic-locking `version`, `@Version`),
+  `document_updates` (append-only, BIGINT identity PK),
+  `document_snapshots` — exactly as specified in
+  `docs/database-design.md`
+- [x] Document metadata REST (`com.syncspace.documents`, following the
+  messaging module's structure): list/create under a workspace,
+  get/rename/delete by id. Non-members get 404, VIEWER gets 403 on
+  writes, documents are invisible outside their owning workspace.
+  Renames bump `version` (via `saveAndFlush` — the `@Version`
+  increment happens at flush) and publish `DOCUMENT_UPDATED` to
+  `/topic/workspaces/{id}/documents` only after the DB commit. Deletes
+  cascade to updates and snapshots.
+- [x] Collaboration server (`collaboration-server/`, Node 22): real Yjs
+  sync service on the `y-websocket` protocol, implemented directly on
+  `y-protocols` sync + awareness because `y-websocket` 3.x no longer
+  ships server utils. Endpoint `ws://host/collab/{documentId}`
+  (`?token=…` or `Authorization` header). Every connection verifies
+  the JWT signature locally AND document membership with the backend
+  (`GET /api/v1/documents/{id}` — 200 means member); anything else
+  closes with 4401. Binary updates are relayed between clients (never
+  whole-document replacement); awareness (cursors/selections, user
+  colors) is broadcast; every update is appended to
+  `document_updates` and snapshots go to `document_snapshots`.
+- [x] Snapshot policy (documented in `src/collab.js`,
+  `src/persistence.js`, `docs/websocket-events.md`): after 50 persisted
+  updates, at most once per 60 s for dirty documents, and when the last
+  client leaves a document. Loading applies the latest snapshot plus
+  all logged updates (re-applying covered updates is harmless — Yjs
+  update application is idempotent), so a reconnecting client receives
+  only what it missed via its SyncStep1 state vector.
+- [x] Env wiring: `collaboration-server/.env.example`, `JWT_SECRET`
+  added to the collab service in `infrastructure/docker-compose.yml`
+  (compose YAML parses; `docker compose up` cannot run in this VM),
+  root `.env.example` gains the collab vars.
+- [x] No presence work, no document editor frontend, no Kanban work in
+  this slice.
+
+Commits on `feature/collaborative-docs`:
+
+1. `cd58756` documents: metadata REST, Flyway V3, authorization,
+   DOCUMENT_UPDATED broadcast
+2. collaboration server: Yjs sync + awareness, JWT + membership auth
+   (4401), update/snapshot persistence, tests (SHA in git log)
+
+Decisions where the docs were ambiguous:
+
+- List returns `{ "documents": [...] }` with full metadata
+  (`workspaceId`, `version`, `createdAt`, `updatedAt`) per
+  `api-contracts.md`; `GET /documents/{id}` returns the same DTO.
+- `DOCUMENT_UPDATED` is published only on rename (the only metadata
+  write); create/delete publish nothing.
+- The collab server verifies the JWT with `jsonwebtoken` accepting
+  HS256/HS384/HS512: the backend signs with JJWT, which picks the HMAC
+  variant from the secret length, and the local default secret (48
+  chars) signs HS384 — a HS256-only verifier 4401'd every real token
+  (caught by the live check, fixed, regression-tested).
+- Frames arriving before authorization finishes are queued server-side
+  and replayed in order once accepted; they are never processed
+  unauthenticated. (Without this, the client's SyncStep1 sent on open
+  was dropped and providers never reported `synced`.)
+- Sync replies carry the outer `messageSync` prefix before the
+  `readSyncMessage` reply — without it the client misread the reply's
+  sync-type byte as the outer message type.
+- Persistence failures never break sync: relay happens first, the
+  database write second, failures are logged and the room stays dirty
+  for the next snapshot attempt. If PostgreSQL is unreachable the
+  server still serves sync in memory with persistence reported
+  `disabled` on `/health`.
+- `npm test` script changed from `node --test test/` to
+  `node --test test/*.test.js`: this Node version does not resolve the
+  bare directory argument.
+- Yjs `Awareness` runs a 3 s housekeeping interval that is only cleared
+  by `awareness.destroy()`; the server destroys each room's Awareness
+  and Doc when the room drops, and the tests destroy client docs after
+  destroying providers — otherwise the test process never exits.
+
+Verification (Nov 26, 2026, this worktree):
+
+- Backend `./mvnw test`: **87/87 pass** (70 pre-existing + 17 new
+  document tests: 14 service unit, 3 integration).
+- Collab server `npm test`: **6/6 pass** (health, bad token → 4401,
+  missing token → 4401, valid token but non-member → 4401, HS384
+  token accepted, two-client convergence + awareness + persistence +
+  reload after restart).
+- Live boot test (real backend :8080 + collab server :3001 against
+  real Postgres/Redis): two registered users (Ana, Ben), workspace +
+  invite/accept, document created over REST; two real Yjs clients made
+  concurrent edits ("Ana was here. " / "Ben was here. ") and both
+  converged to identical content `"Ben was here. Ana was here. "`;
+  Ben's client received Ana's awareness state; Postgres then held
+  **2 rows in `document_updates` and 1 row in `document_snapshots`**
+  for the document. Live servers stopped afterwards.
+
+Known issues:
+
+- `docker compose up` still cannot run in this VM (containers blocked);
+  the collab service's Compose wiring (`JWT_SECRET`, `DATABASE_URL`,
+  `BACKEND_URL`) is validated by YAML parse only and needs a live
+  Compose run on a developer machine.
+- No document editor frontend yet — TipTap + Yjs UI lands with the
+  frontend slice; the sync protocol it needs is the standard
+  `y-websocket` one verified here.
 
 ## Architecture decisions
 

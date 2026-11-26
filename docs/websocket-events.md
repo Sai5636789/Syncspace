@@ -142,18 +142,31 @@ so fan-out resumes when Redis returns.
 - Payloads are validated (Bean Validation on the server); invalid frames
   return `ERROR` (`VALIDATION_FAILED`) and are dropped.
 
-## Yjs collaboration protocol
+## Yjs collaboration protocol (implemented with the documents slice)
 
 - Endpoint: `ws://<host>/collab/{documentId}` (through Nginx).
 - Authentication: JWT in the connection query (`?token=…`) or
-  `Authorization` header where the client supports it; the server verifies
-  the token and document membership with the backend before accepting the
-  connection. Unauthorized connections are closed with code 4401.
-- Protocol: standard `y-websocket` sync + awareness. The server relays
-  binary Yjs updates between clients, broadcasts awareness state
-  (cursor/selection, user color), and persists updates and snapshots to
-  PostgreSQL. On reconnect, the client requests the state vector and
-  receives only the updates it missed.
+  `Authorization` header where the client supports it; the server
+  verifies the token signature (HMAC-SHA256, same secret as the
+  backend) and document membership with the backend
+  (`GET /api/v1/documents/{id}` — 200 means member) before accepting
+  the connection. Unauthorized connections are closed with code 4401.
+  Frames sent before authorization finishes are queued server-side
+  and replayed in order once accepted, never processed unauthenticated.
+- Protocol: standard `y-websocket` sync + awareness, implemented on
+  `y-protocols` (`y-websocket` 3.x no longer ships server utils). The
+  server relays binary Yjs updates between clients, broadcasts
+  awareness state (cursor/selection, user color), and persists updates
+  and snapshots to PostgreSQL. On reconnect, the client requests the
+  state vector and receives only the updates it missed.
+- Persistence policy: every received update is appended to
+  `document_updates` (relay happens first, persistence second, so sync
+  latency never waits on the database). A snapshot is written to
+  `document_snapshots` after 50 persisted updates, at most once per
+  60 s for dirty documents, and when the last client leaves a
+  document. Loading applies the latest snapshot plus all logged
+  updates in order (re-applying covered updates is harmless — Yjs
+  update application is idempotent).
 - Saving states shown in the editor: `saving` (local update not yet
   acknowledged), `saved` (server persisted), `offline` (no connection —
   edits queue in IndexedDB), `reconnecting`.

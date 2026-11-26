@@ -269,7 +269,7 @@ to Redis and marks `published_at`.
   plan listed V2 as documents; documents are not built yet, so messaging
   took V2 and documents will take a later number.)
 - `V3__documents.sql` — documents, document_updates, document_snapshots
-  (when the documents slice lands; number may shift — see V2 note).
+  (landed with the documents slice; content sync is Yjs, see below).
 - `V4__tasks.sql` — tasks, task_activity.
 - `V5__notifications_audit.sql` — notifications, audit_logs.
 - `V6__outbox.sql` — outbox_events (stretch, only when implemented).

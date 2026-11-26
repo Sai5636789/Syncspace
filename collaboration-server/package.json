@@ -1,1 +1,26 @@
-{"description":"SyncSpace Yjs document synchronization service — CRDT sync, awareness, and durable persistence of document updates and snapshots.","engines":{"node":">=22"},"license":"MIT","main":"src/server.js","name":"syncspace-collaboration-server","private":true,"scripts":{"dev":"node --watch src/server.js","start":"node src/server.js","test":"node --test test/"},"type":"module","version":"0.1.0"}
+{
+  "description": "SyncSpace Yjs document synchronization service \u2014 CRDT sync, awareness, and durable persistence of document updates and snapshots.",
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "main": "src/server.js",
+  "name": "syncspace-collaboration-server",
+  "private": true,
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "type": "module",
+  "version": "0.1.0",
+  "dependencies": {
+    "jsonwebtoken": "^9.0.3",
+    "lib0": "^0.2.120",
+    "pg": "^8.23.1",
+    "ws": "^8.23.0",
+    "y-protocols": "^1.0.7",
+    "y-websocket": "^3.1.0",
+    "yjs": "^13.6.33"
+  }
+}
