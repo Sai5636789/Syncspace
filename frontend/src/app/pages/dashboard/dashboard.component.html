@@ -46,6 +46,9 @@
               <a mat-button color="primary" [routerLink]="['/workspaces', workspace.id, 'chat']">
                 Team Chat
               </a>
+              <a mat-button color="primary" [routerLink]="['/workspaces', workspace.id, 'documents']">
+                Documents
+              </a>
               @if (workspace.role !== 'OWNER') {
                 <button mat-button color="warn" (click)="leave(workspace)">Leave</button>
               }

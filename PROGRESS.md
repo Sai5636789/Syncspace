@@ -275,6 +275,126 @@ Known issues:
   frontend slice; the sync protocol it needs is the standard
   `y-websocket` one verified here.
 
+### Collaborative documents (frontend: management + TipTap editor) — DONE Nov 26, 2026 (1 commit, branch `feature/collaborative-docs`)
+
+- [x] Document management page (`/workspaces/:id/documents`): lists
+  the workspace's documents from REST, creates (title form), renames
+  inline (PATCH), deletes with a two-click confirm (DELETE), opens the
+  editor. Linked from the dashboard (per-workspace Documents link) and
+  the chat header; the editor links back to Documents and Team Chat.
+- [x] Document editor page (`/workspaces/:id/documents/:documentId`,
+  lazy-loaded so TipTap + Yjs stay out of the initial bundle):
+  TipTap bound to a Yjs document over the collab server
+  (`y-websocket` WebsocketProvider, shared fragment `content`),
+  StarterKit (UndoRedo off — Collaboration ships its own Yjs undo)
+  + Underline + Link + Placeholder + Collaboration +
+  CollaborationCursor. Toolbar: paragraph, H1–H3, bold, italic,
+  underline, bullet/numbered lists, code block, undo/redo, link
+  apply/remove with a URL field. Remote cursors and selections render
+  from Yjs awareness with per-user colors and name labels; the header
+  lists the document's collaborators from the same awareness state.
+- [x] `CollabService`: fresh-JWT connect (`?token=…`, refreshes the
+  access token first when it is missing or expires within 60 s,
+  reusing the auth refresh endpoint), `y-indexeddb` local persistence
+  (`syncspace-doc-<id>`, skipped where IndexedDB does not exist) so
+  offline edits survive a reload and sync on reconnect, and honest
+  save states wired to real provider events — `saving` (local edit
+  after the last sync, until the socket flushes), `saved` (provider
+  synced, nothing buffered), `offline` (socket unreachable),
+  `reconnecting` (dropped after a successful connection), plus
+  `connecting` before the first sync. A 4401 close sets `forbidden`
+  and the editor goes read-only with a "you don't have access" state
+  instead of crashing.
+- [x] `DocumentService` (list/create/get/rename/delete) following the
+  chat service's shape; `proxy.conf.json` gains `/collab` → :3001
+  (ws) so the editor connects same-origin through the dev server.
+- [x] Tests: `npm test` **72/72 pass** (41 pre-existing + 31 new:
+  document service 5, collab service 12, documents page 6, editor 8
+  — including real-TipTap bold/link tests, 4401 forbidden state, and
+  saving→saved flush timing). Frontend `npm run build` passes
+  (initial 662.86 kB, warning only as before; editor lazy chunk
+  545.87 kB). Backend `./mvnw test`: **99/99 pass** (87 pre-existing
+  + 12 presence tests from the merged presence slice; no backend
+  changes in this commit).
+
+Decisions where the docs were ambiguous:
+
+- **No working `@tiptap/extension-collaboration-cursor` release
+  exists for TipTap 3.35.** Its latest (3.0.0, a mislabeled 2.5.0)
+  builds on `y-prosemirror`'s cursor plugin, whose sync-plugin key
+  is a different instance from the one `@tiptap/y-tiptap`'s
+  Collaboration extension uses — the editor crashed at creation
+  (`Cannot read properties of undefined (reading 'doc')` in
+  `y-prosemirror`'s cursor plugin). Fixed with a small local
+  `CollaborationCursor` extension
+  (`pages/document-editor/collaboration-cursor.extension.ts`) that
+  wires `@tiptap/y-tiptap`'s own `yCursorPlugin` (now a direct
+  dependency) with the same caret rendering and awareness-user
+  contract; the published package was removed.
+- **"Saved" cannot mean "persisted in PostgreSQL".** The client
+  cannot observe the server's database write, so `saved` means the
+  provider reports synced and the socket has no buffered local update
+  outstanding (the server persists every update it receives, relay
+  first). Documented on the `SaveState` type in `collab.service.ts`.
+- **Collaboration fragment name is `content`**, not the extension's
+  default `default` — explicit in the editor config; the name is
+  client-side only, the server relays binary updates.
+- **The editor host must exist before the editor is created.** The
+  host div lives inside the card that only renders once metadata
+  loading finishes, while the session connects in the same microtask
+  chain — so the editor loads metadata, renders synchronously via
+  `ChangeDetectorRef.detectChanges()`, then connects. (Without this
+  the editor was silently never created; caught by the component
+  tests.)
+- **Editor route is lazy-loaded** (`loadComponent`): the eager build
+  exceeded the 1 MB initial-budget error (1.21 MB) with TipTap + Yjs
+  in the main bundle; lazy loading brings the initial bundle to
+  662.86 kB. No budget numbers were changed.
+- **Remote cursor/selection CSS lives in `src/styles.scss`, not the
+  component stylesheet**: ProseMirror and cursor spans are created at
+  runtime, so Angular's emulated view encapsulation would not match
+  them from a component stylesheet.
+- **A rename by another user does not live-update the documents
+  list** — the page re-reads from REST on open. The backend
+  broadcasts `DOCUMENT_UPDATED`, but no STOMP subscription to the
+  documents topic exists yet.
+- The editor's save badge shows `connecting` before the first sync;
+  the docs list only `saving`/`saved`/`offline`/`reconnecting`.
+
+Verification (Nov 26, 2026, this worktree):
+
+- Frontend `npm run build`: passes (see above).
+  `npm test -- --watch=false`: **72/72 pass**.
+- Backend `./mvnw test`: **99/99 pass** (see above; the first run
+  showed 3 `PresenceIntegrationTest` failures — "member did not read
+  online within 5s" — because this VM's Redis had been started bound
+  to 127.0.0.1 only while the backend resolves `localhost` to ::1;
+  restarting Redis bound to both families fixed it with no code
+  change. The VM restart during this slice had also wiped the
+  ephemeral PostgreSQL/Redis installs; both were reinstalled via apt
+  and the `syncspace` database/user recreated.)
+- Live boot test (real backend :8080 + collab server :3001 + Angular
+  dev server :4200, real Postgres/Redis, probe script driving the
+  exact REST + Yjs surfaces the editor uses): register Ana + Ben +
+  Carol, workspace + invite/accept, document created over REST;
+  metadata reads succeed for both members and 404 for the
+  non-member; Ana connects through the :4200 `/collab` proxy and Ben
+  direct to :3001, both sync; awareness exchanged (both see Ana +
+  Ben); concurrent edits ("Ana was here. " / "Ben was here. ")
+  converge identically to `"Ana was here. Ben was here. "` with
+  identical Yjs state vectors; Carol's collab connection closes with
+  **4401**; after disconnect, a fresh client reloads the converged
+  content from the server. Postgres then held **2 rows in
+  `document_updates` and 1 row in `document_snapshots`** for the
+  document. Editor and documents-list routes return **200** via
+  :4200, and `/api/v1/health` through the dev-server proxy returns
+  ok. **14/14 probe checks pass.** Live servers stopped afterwards.
+- Not verified live in this VM: a real-browser click-through of the
+  editor (no live browser in this session — the editor UI is covered
+  by component tests with the real TipTap editor, and the live probe
+  exercised the REST + Yjs protocol the editor uses), `docker
+  compose up` (containers blocked), and multi-instance fan-out.
+
 ## Architecture decisions
 
 - **Modular monolith + dedicated Yjs service.** Spring Boot owns business
