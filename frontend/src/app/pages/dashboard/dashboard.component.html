@@ -46,6 +46,9 @@
               <a mat-button color="primary" [routerLink]="['/workspaces', workspace.id, 'chat']">
                 Team Chat
               </a>
+              <a mat-button color="primary" [routerLink]="['/workspaces', workspace.id, 'documents']">
+                Documents
+              </a>
               @if (workspace.role !== 'OWNER') {
                 <button mat-button color="warn" (click)="leave(workspace)">Leave</button>
               }
@@ -65,9 +68,17 @@
         @if (members().length === 0) {
           <p>No members found.</p>
         } @else {
-          <ul>
-            @for (member of members(); track member.userId) {
-              <li>{{ member.displayName }} ({{ member.email }}) — {{ member.role }}</li>
+          <ul class="member-list">
+            @for (member of displayMembers(); track member.userId) {
+              <li>
+                <span
+                  class="presence-dot"
+                  [attr.data-status]="member.status"
+                  [attr.aria-label]="member.displayName + ' is ' + member.status"
+                ></span>
+                {{ member.displayName }} ({{ member.email }}) — {{ member.role }}
+                <span class="presence-label">{{ presenceLabel(member) }}</span>
+              </li>
             }
           </ul>
         }

@@ -6,6 +6,7 @@ import { Client, IMessage } from '@stomp/stompjs';
 import { AuthService } from './auth.service';
 import {
   ChatStompService,
+  PRESENCE_HEARTBEAT_MS,
   STOMP_CLIENT_FACTORY,
   TYPING_TIMEOUT_MS,
   computeBackoffDelay,
@@ -144,7 +145,7 @@ describe('ChatStompService', () => {
     return client;
   }
 
-  it('connects with the bearer token and subscribes to message and typing topics', () => {
+  it('connects with the bearer token and subscribes to message, typing, and presence topics', () => {
     const client = connectAndFire();
     expect(client.activated).toBe(true);
     expect(client.heartbeatIncoming).toBe(10000);
@@ -152,6 +153,7 @@ describe('ChatStompService', () => {
     expect([...client.handlers.keys()]).toEqual([
       '/topic/workspaces/ws-1/messages',
       '/topic/workspaces/ws-1/typing',
+      '/topic/workspaces/ws-1/presence',
     ]);
   });
 
@@ -190,6 +192,7 @@ describe('ChatStompService', () => {
     expect([...clients[1].handlers.keys()]).toEqual([
       '/topic/workspaces/ws-1/messages',
       '/topic/workspaces/ws-1/typing',
+      '/topic/workspaces/ws-1/presence',
     ]);
     expect(reconnected).toHaveLength(1);
   });
@@ -205,17 +208,86 @@ describe('ChatStompService', () => {
 
   it('publishes sends, typing, and acks to the workspace destinations', () => {
     const client = connectAndFire();
+    // Connecting sends one presence heartbeat immediately.
+    expect(client.published[0].destination).toBe('/app/workspaces/ws-1/presence');
+    expect(JSON.parse(client.published[0].body)).toEqual({});
     const clientMessageId = service.sendMessage('ch-1', 'hello');
-    expect(client.published[0].destination).toBe('/app/workspaces/ws-1/chat');
-    expect(JSON.parse(client.published[0].body)).toEqual({
+    expect(client.published[1].destination).toBe('/app/workspaces/ws-1/chat');
+    expect(JSON.parse(client.published[1].body)).toEqual({
       channelId: 'ch-1',
       clientMessageId,
       body: 'hello',
     });
     service.sendTyping('ch-1', true);
-    expect(JSON.parse(client.published[1].body)).toEqual({ channelId: 'ch-1', typing: true });
+    expect(JSON.parse(client.published[2].body)).toEqual({ channelId: 'ch-1', typing: true });
     service.sendAck('m-9');
-    expect(JSON.parse(client.published[2].body)).toEqual({ messageId: 'm-9' });
+    expect(JSON.parse(client.published[3].body)).toEqual({ messageId: 'm-9' });
+  });
+
+  it('sends a presence heartbeat on connect and every 15s until disconnect', async () => {
+    const client = connectAndFire();
+    const heartbeats = () =>
+      client.published.filter((item) => item.destination === '/app/workspaces/ws-1/presence');
+    expect(heartbeats()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(PRESENCE_HEARTBEAT_MS);
+    expect(heartbeats()).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(PRESENCE_HEARTBEAT_MS);
+    expect(heartbeats()).toHaveLength(3);
+    service.disconnect();
+    await vi.advanceTimersByTimeAsync(PRESENCE_HEARTBEAT_MS * 2);
+    expect(heartbeats()).toHaveLength(3);
+  });
+
+  it('does not throw when heartbeating while offline', () => {
+    expect(() => service.sendHeartbeat()).not.toThrow();
+  });
+
+  it('updates presence from PRESENCE_CHANGED and deduplicates by eventId', () => {
+    const client = connectAndFire();
+    const online = envelope('evt-p1', 'PRESENCE_CHANGED', {
+      userId: 'u-2',
+      status: 'online',
+      lastSeenAt: '2026-11-26T12:00:00Z',
+    });
+    client.fireFrame('/topic/workspaces/ws-1/presence', online);
+    client.fireFrame('/topic/workspaces/ws-1/presence', online);
+    expect(service.presence()['u-2']).toEqual({ status: 'online', lastSeenAt: '2026-11-26T12:00:00Z' });
+    client.fireFrame(
+      '/topic/workspaces/ws-1/presence',
+      envelope('evt-p2', 'PRESENCE_CHANGED', {
+        userId: 'u-2',
+        status: 'offline',
+        lastSeenAt: '2026-11-26T12:05:00Z',
+      }),
+    );
+    expect(service.presence()['u-2']).toEqual({ status: 'offline', lastSeenAt: '2026-11-26T12:05:00Z' });
+  });
+
+  it('seeds presence from a REST snapshot', () => {
+    service.applyPresenceSnapshot([
+      {
+        userId: 'u-1',
+        email: 'sai@example.com',
+        displayName: 'Sai',
+        role: 'OWNER',
+        joinedAt: '2026-11-24T00:00:00Z',
+        status: 'online',
+        lastSeenAt: '2026-11-26T12:00:00Z',
+      },
+      {
+        userId: 'u-2',
+        email: 'ana@example.com',
+        displayName: 'Ana',
+        role: 'MEMBER',
+        joinedAt: '2026-11-24T00:00:00Z',
+        status: 'offline',
+        lastSeenAt: '2026-11-26T11:00:00Z',
+      },
+    ]);
+    expect(service.presence()).toEqual({
+      'u-1': { status: 'online', lastSeenAt: '2026-11-26T12:00:00Z' },
+      'u-2': { status: 'offline', lastSeenAt: '2026-11-26T11:00:00Z' },
+    });
   });
 
   it('throws when sending while offline', () => {

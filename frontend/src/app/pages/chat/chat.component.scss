@@ -57,6 +57,50 @@
   align-items: start;
 }
 
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.member-list ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.member-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.presence-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #9e9e9e;
+  align-self: center;
+}
+
+.presence-dot[data-status='online'] {
+  background: #1b7a3d;
+}
+
+.member-name {
+  font-weight: 500;
+}
+
+.presence-label {
+  color: var(--mat-sys-on-surface-variant, #5f6368);
+  font-size: 12px;
+}
+
 .channel-list ul {
   list-style: none;
   padding: 0;

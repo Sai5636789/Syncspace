@@ -7,8 +7,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { AuthService } from '../../core/services/auth.service';
 import { ChatService } from '../../core/services/chat.service';
 import { ChatStompService } from '../../core/services/chat-stomp.service';
+import { PresenceService } from '../../core/services/presence.service';
 import { WorkspaceService } from '../../core/services/workspace.service';
 import { Channel, ChatMessage, TypingUser, WsEnvelope } from '../../core/models/chat.model';
+import { PresenceMember, PresenceState } from '../../core/models/presence.model';
 import { ChatComponent } from './chat.component';
 
 const channels: Channel[] = [
@@ -50,11 +52,33 @@ function envelope(eventId: string, eventType: string, payload: unknown): WsEnvel
   };
 }
 
+const presenceMembers: PresenceMember[] = [
+  {
+    userId: 'u-1',
+    email: 'sai@example.com',
+    displayName: 'Sai',
+    role: 'OWNER',
+    joinedAt: '2026-11-24T00:00:00Z',
+    status: 'online',
+    lastSeenAt: '2026-11-25T00:00:00Z',
+  },
+  {
+    userId: 'u-2',
+    email: 'ana@example.com',
+    displayName: 'Ana',
+    role: 'MEMBER',
+    joinedAt: '2026-11-24T00:00:00Z',
+    status: 'offline',
+    lastSeenAt: '2026-11-25T00:00:00Z',
+  },
+];
+
 describe('ChatComponent', () => {
   async function setup() {
     const messageEvents$ = new Subject<WsEnvelope>();
     const reconnected$ = new Subject<void>();
     const typingSignal = signal<Readonly<Record<string, TypingUser[]>>>({});
+    const presenceSignal = signal<Readonly<Record<string, PresenceState>>>({});
     const chatMock = {
       listChannels: vi.fn(() => of(channels)),
       createChannel: vi.fn((_: string, name: string) =>
@@ -72,6 +96,7 @@ describe('ChatComponent', () => {
     const stompMock = {
       status: signal('connected'),
       typing: typingSignal,
+      presence: presenceSignal,
       messageEvents$,
       reconnected$,
       connect: vi.fn(),
@@ -79,6 +104,17 @@ describe('ChatComponent', () => {
       sendMessage: vi.fn(() => 'client-uuid-1'),
       sendTyping: vi.fn(),
       sendAck: vi.fn(),
+      sendHeartbeat: vi.fn(),
+      applyPresenceSnapshot: vi.fn((members: PresenceMember[]) => {
+        const next: Record<string, PresenceState> = {};
+        for (const member of members) {
+          next[member.userId] = { status: member.status, lastSeenAt: member.lastSeenAt };
+        }
+        presenceSignal.set(next);
+      }),
+    };
+    const presenceMock = {
+      listPresence: vi.fn(() => of(presenceMembers)),
     };
     await TestBed.configureTestingModule({
       imports: [ChatComponent],
@@ -96,10 +132,12 @@ describe('ChatComponent', () => {
         },
         { provide: ChatService, useValue: chatMock },
         { provide: ChatStompService, useValue: stompMock },
+        { provide: PresenceService, useValue: presenceMock },
         {
           provide: WorkspaceService,
           useValue: {
             get: () => of({ id: 'ws-1', name: 'Alpha Team', description: null, ownerId: 'u-1', role: 'OWNER', createdAt: '', updatedAt: '' }),
+            listMembers: () => of([]),
           },
         },
       ],
@@ -107,7 +145,7 @@ describe('ChatComponent', () => {
     const fixture = TestBed.createComponent(ChatComponent);
     fixture.detectChanges();
     await fixture.whenStable();
-    return { fixture, chatMock, stompMock, messageEvents$, reconnected$, typingSignal };
+    return { fixture, chatMock, stompMock, presenceMock, presenceSignal, messageEvents$, reconnected$, typingSignal };
   }
 
   function text(fixture: ReturnType<typeof TestBed.createComponent>): string {
@@ -254,6 +292,27 @@ describe('ChatComponent', () => {
     fixture.detectChanges();
     expect(chatMock.createChannel).toHaveBeenCalledWith('ws-1', 'announcements', null);
     expect(text(fixture)).toContain('# announcements');
+  });
+
+  it('shows the member list with live presence from the snapshot', async () => {
+    const { fixture, presenceMock } = await setup();
+    expect(presenceMock.listPresence).toHaveBeenCalledWith('ws-1');
+    const textContent = text(fixture);
+    expect(textContent).toContain('Sai');
+    expect(textContent).toContain('Ana');
+    expect(textContent).toContain('Online');
+    expect(textContent).toContain('Last seen');
+  });
+
+  it('updates a member to online when a presence change arrives', async () => {
+    const { fixture, presenceSignal } = await setup();
+    presenceSignal.set({
+      'u-1': { status: 'online', lastSeenAt: '2026-11-25T00:00:00Z' },
+      'u-2': { status: 'online', lastSeenAt: '2026-11-25T00:01:00Z' },
+    });
+    fixture.detectChanges();
+    expect((text(fixture).match(/Online/g) ?? []).length).toBe(2);
+    expect(text(fixture)).not.toContain('Last seen');
   });
 
   it('recovers from REST after a reconnect', async () => {

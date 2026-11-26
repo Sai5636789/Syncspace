@@ -50,11 +50,11 @@ Every STOMP message body is JSON with this envelope:
 
 ## Event types
 
-Implemented in the messaging slice: `MESSAGE_CREATED`,
+Implemented: `MESSAGE_CREATED`,
 `MESSAGE_UPDATED`, `MESSAGE_DELETED`, `MESSAGE_SENT`,
-`MESSAGE_ACKNOWLEDGED`, `TYPING_STARTED` / `TYPING_STOPPED`, and
-`ERROR`. The remaining types below are planned — their slices have not
-landed yet, so no server code publishes them.
+`MESSAGE_ACKNOWLEDGED`, `TYPING_STARTED` / `TYPING_STOPPED`,
+`PRESENCE_CHANGED`, `DOCUMENT_UPDATED`, and `ERROR`. The remaining types below are planned
+— their slices have not landed yet, so no server code publishes them.
 
 | Event type | Payload | Meaning |
 | --- | --- | --- |
@@ -67,8 +67,8 @@ landed yet, so no server code publishes them.
 | `TASK_CREATED` | `{ task }` | New task (planned — Kanban slice, not built yet) |
 | `TASK_UPDATED` | `{ task }` | Task edited/moved (payload carries new `version`) (planned — Kanban slice, not built yet) |
 | `TASK_DELETED` | `{ taskId }` | Task removed (planned — Kanban slice, not built yet) |
-| `PRESENCE_CHANGED` | `{ userId, status: "online" \| "offline", lastSeenAt }` | Presence update (planned — documents + presence slice, not built yet) |
-| `DOCUMENT_UPDATED` | `{ documentId, title, updatedAt, version }` | Document metadata changed (content sync is Yjs) (planned — documents slice, not built yet) |
+| `PRESENCE_CHANGED` | `{ userId, status: "online" \| "offline", lastSeenAt }` | Presence update (presence slice). Broadcast only on a state transition; a heartbeat refreshes a per-session Redis key (TTL 45 s, client beats every 15 s). Going offline is detected by the STOMP disconnect listener (fast path) and by a 15 s TTL-expiry sweep (safety net for vanished connections). |
+| `DOCUMENT_UPDATED` | `{ documentId, title, updatedAt, version }` | Document metadata changed (content sync is Yjs); broadcast to `/topic/workspaces/{workspaceId}/documents` after the rename commits |
 | `NOTIFICATION_CREATED` | `{ notification }` | New notification for the user (planned — notifications slice, not built yet) |
 | `MEMBER_JOINED` / `MEMBER_LEFT` / `MEMBER_ROLE_CHANGED` | `{ userId, role? }` | Membership change (planned, not built yet) |
 | `WORKSPACE_UPDATED` | `{ workspace }` | Workspace renamed / edited (planned, not built yet) |
@@ -76,25 +76,26 @@ landed yet, so no server code publishes them.
 
 ## Destinations
 
-Application (client → server) — only `chat`, `typing`, and `ack` are
-implemented; `presence` is planned (documents + presence slice):
+Application (client → server) — `chat`, `typing`, `ack`, and
+`presence` are implemented:
 
 ```text
 /app/workspaces/{workspaceId}/chat        send a message (payload: { channelId, clientMessageId, body })
 /app/workspaces/{workspaceId}/typing      typing indicator
 /app/workspaces/{workspaceId}/ack         delivery acknowledgement (payload: { messageId })
-/app/workspaces/{workspaceId}/presence    heartbeat / presence ping (planned, not built yet)
+/app/workspaces/{workspaceId}/presence    heartbeat / presence ping (empty payload `{}`; membership-checked)
 ```
 
-Subscription (server → client) — `/messages` and `/typing` topics are
-implemented; the others are planned and have no publisher yet:
+Subscription (server → client) — `/messages`, `/typing`, `/presence`,
+and `/documents` topics are implemented; the others are planned and have no
+publisher yet:
 
 ```text
 /topic/workspaces/{workspaceId}/messages
 /topic/workspaces/{workspaceId}/typing
+/topic/workspaces/{workspaceId}/documents
+/topic/workspaces/{workspaceId}/presence     (presence slice: PRESENCE_CHANGED on transitions)
 /topic/workspaces/{workspaceId}/tasks        (planned — Kanban slice)
-/topic/workspaces/{workspaceId}/presence     (planned — documents + presence slice)
-/topic/workspaces/{workspaceId}/documents    (planned — documents slice)
 /topic/workspaces/{workspaceId}/members      (planned)
 /user/queue/notifications
 /user/queue/acknowledgements
@@ -142,18 +143,34 @@ so fan-out resumes when Redis returns.
 - Payloads are validated (Bean Validation on the server); invalid frames
   return `ERROR` (`VALIDATION_FAILED`) and are dropped.
 
-## Yjs collaboration protocol
+## Yjs collaboration protocol (implemented with the documents slice)
 
 - Endpoint: `ws://<host>/collab/{documentId}` (through Nginx).
 - Authentication: JWT in the connection query (`?token=…`) or
-  `Authorization` header where the client supports it; the server verifies
-  the token and document membership with the backend before accepting the
-  connection. Unauthorized connections are closed with code 4401.
-- Protocol: standard `y-websocket` sync + awareness. The server relays
-  binary Yjs updates between clients, broadcasts awareness state
-  (cursor/selection, user color), and persists updates and snapshots to
-  PostgreSQL. On reconnect, the client requests the state vector and
-  receives only the updates it missed.
+  `Authorization` header where the client supports it; the server
+  verifies the token signature (HMAC — HS256/HS384/HS512; the backend
+  picks the variant from the secret length, same secret as the backend)
+  and document membership with the backend
+  (`GET /api/v1/documents/{id}` — 200 means member) before accepting
+  the connection. Unauthorized connections are closed with code 4401.
+  Frames sent before authorization finishes are queued server-side
+  and replayed in order once accepted, never processed unauthenticated.
+- Protocol: standard `y-websocket` sync + awareness, implemented on
+  `y-protocols` (`y-websocket` 3.x no longer ships server utils). The
+  server relays binary Yjs updates between clients, broadcasts
+  awareness state (cursor/selection, user color), and persists updates
+  and snapshots to PostgreSQL. On reconnect, the client requests the
+  state vector and receives only the updates it missed.
+- Persistence policy: every received update is appended to
+  `document_updates` (relay happens first, persistence second, so sync
+  latency never waits on the database). A snapshot is written to
+  `document_snapshots` after 50 persisted updates, at most once per
+  60 s for dirty documents, and when the last client leaves a
+  document. Loading applies the latest snapshot plus all logged
+  updates in order (re-applying covered updates is harmless — Yjs
+  update application is idempotent).
 - Saving states shown in the editor: `saving` (local update not yet
-  acknowledged), `saved` (server persisted), `offline` (no connection —
+  acknowledged), `saved` (provider synced with nothing buffered on
+  the socket — the server persists every update it receives, but the
+  client cannot observe the database write), `offline` (no connection —
   edits queue in IndexedDB), `reconnecting`.

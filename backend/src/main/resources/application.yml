@@ -47,3 +47,10 @@ syncspace:
     refresh-ttl-days: ${JWT_REFRESH_TTL_DAYS:7}
   invitations:
     default-expiry-hours: 72
+  presence:
+    # Per-session presence key TTL. The frontend heartbeats every 15 s, so
+    # 45 s tolerates two missed beats before a user reads offline. The
+    # disconnect listener is the fast offline path; the sweeper below is
+    # the safety net for connections that vanish without an event.
+    ttl-seconds: ${PRESENCE_TTL_SECONDS:45}
+    sweep-interval-ms: ${PRESENCE_SWEEP_INTERVAL_MS:15000}

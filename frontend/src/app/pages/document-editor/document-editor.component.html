@@ -1,0 +1,114 @@
+<div class="page">
+  <div class="editor-header">
+    <div>
+      <a mat-button [routerLink]="['/workspaces', workspaceId(), 'documents']">← Documents</a>
+      <a mat-button [routerLink]="['/workspaces', workspaceId(), 'chat']">Team Chat</a>
+      <h1>{{ document()?.title || 'Document' }}</h1>
+    </div>
+    <div class="header-side">
+      @if (collaborators().length > 0) {
+        <ul class="participants" aria-label="People editing this document">
+          @for (person of collaborators(); track person.clientId) {
+            <li>
+              <span
+                class="participant-dot"
+                [style.background-color]="person.color"
+                [attr.aria-label]="person.name"
+              ></span>
+              {{ person.isSelf ? 'You' : person.name }}
+            </li>
+          }
+        </ul>
+      }
+      <span class="save-state" [attr.data-state]="saveState()" role="status">
+        {{ saveStateLabel() }}
+      </span>
+    </div>
+  </div>
+
+  @if (error()) {
+    <p class="error" role="alert">
+      {{ error() }}
+      <button mat-button (click)="retry()">Retry</button>
+    </p>
+  }
+
+  @if (forbidden()) {
+    <p class="error" role="alert">
+      You don't have access to this document. It may have been deleted or shared with someone else.
+      <a mat-button [routerLink]="['/workspaces', workspaceId(), 'documents']">Back to documents</a>
+    </p>
+  }
+
+  @if (loading()) {
+    <p>Loading document…</p>
+  } @else if (!error()) {
+    <mat-card class="editor-card">
+      <mat-card-content>
+        <div class="toolbar" [attr.data-tick]="editorTick()" role="toolbar" aria-label="Formatting">
+          <button mat-button [class.active]="isActive('paragraph')" (click)="setParagraph()">¶</button>
+          <button mat-button [class.active]="isActive('heading', { level: 1 })" (click)="setHeading(1)">
+            H1
+          </button>
+          <button mat-button [class.active]="isActive('heading', { level: 2 })" (click)="setHeading(2)">
+            H2
+          </button>
+          <button mat-button [class.active]="isActive('heading', { level: 3 })" (click)="setHeading(3)">
+            H3
+          </button>
+          <span class="toolbar-separator" aria-hidden="true"></span>
+          <button mat-button [class.active]="isActive('bold')" (click)="toggleBold()" aria-label="Bold">
+            <strong>B</strong>
+          </button>
+          <button mat-button [class.active]="isActive('italic')" (click)="toggleItalic()" aria-label="Italic">
+            <em>I</em>
+          </button>
+          <button mat-button [class.active]="isActive('underline')" (click)="toggleUnderline()" aria-label="Underline">
+            <u>U</u>
+          </button>
+          <span class="toolbar-separator" aria-hidden="true"></span>
+          <button
+            mat-button
+            [class.active]="isActive('bulletList')"
+            (click)="toggleBulletList()"
+            aria-label="Bullet list"
+          >
+            • List
+          </button>
+          <button
+            mat-button
+            [class.active]="isActive('orderedList')"
+            (click)="toggleOrderedList()"
+            aria-label="Numbered list"
+          >
+            1. List
+          </button>
+          <button mat-button [class.active]="isActive('codeBlock')" (click)="toggleCodeBlock()" aria-label="Code block">
+            Code
+          </button>
+          <span class="toolbar-separator" aria-hidden="true"></span>
+          <button mat-button (click)="undo()" aria-label="Undo">
+            <mat-icon>undo</mat-icon>
+          </button>
+          <button mat-button (click)="redo()" aria-label="Redo">
+            <mat-icon>redo</mat-icon>
+          </button>
+        </div>
+        <form [formGroup]="linkForm" (ngSubmit)="applyLink()" class="link-row">
+          <mat-form-field appearance="outline" class="link-field">
+            <mat-label>Link URL for the selected text</mat-label>
+            <input matInput formControlName="url" placeholder="https://example.com" />
+          </mat-form-field>
+          <button mat-button type="submit" [disabled]="!editorReady()">Apply link</button>
+          <button mat-button type="button" (click)="removeLink()" [disabled]="!editorReady()">Remove link</button>
+        </form>
+        <div #editorHost class="editor-host"></div>
+        @if (connectionStatus() === 'disconnected') {
+          <p class="offline-note" role="status">
+            Connection lost — your edits are kept on this device and will sync when you reconnect.
+          </p>
+        }
+      </mat-card-content>
+    </mat-card>
+  }
+</div>

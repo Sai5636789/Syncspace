@@ -1,1 +1,1 @@
-{"/api":{"logLevel":"warn","secure":false,"target":"http://localhost:8080"},"/ws":{"logLevel":"warn","secure":false,"target":"http://localhost:8080","ws":true}}
+{"/api":{"logLevel":"warn","secure":false,"target":"http://localhost:8080"},"/collab":{"logLevel":"warn","secure":false,"target":"http://localhost:3001","ws":true},"/ws":{"logLevel":"warn","secure":false,"target":"http://localhost:8080","ws":true}}
