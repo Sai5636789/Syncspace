@@ -148,8 +148,9 @@ so fan-out resumes when Redis returns.
 - Endpoint: `ws://<host>/collab/{documentId}` (through Nginx).
 - Authentication: JWT in the connection query (`?token=…`) or
   `Authorization` header where the client supports it; the server
-  verifies the token signature (HMAC-SHA256, same secret as the
-  backend) and document membership with the backend
+  verifies the token signature (HMAC — HS256/HS384/HS512; the backend
+  picks the variant from the secret length, same secret as the backend)
+  and document membership with the backend
   (`GET /api/v1/documents/{id}` — 200 means member) before accepting
   the connection. Unauthorized connections are closed with code 4401.
   Frames sent before authorization finishes are queued server-side
@@ -169,5 +170,7 @@ so fan-out resumes when Redis returns.
   updates in order (re-applying covered updates is harmless — Yjs
   update application is idempotent).
 - Saving states shown in the editor: `saving` (local update not yet
-  acknowledged), `saved` (server persisted), `offline` (no connection —
+  acknowledged), `saved` (provider synced with nothing buffered on
+  the socket — the server persists every update it receives, but the
+  client cannot observe the database write), `offline` (no connection —
   edits queue in IndexedDB), `reconnecting`.

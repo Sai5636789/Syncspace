@@ -9,7 +9,7 @@ roadmap compressed:
 | --- | --- | --- | --- |
 | Foundation + Auth + Workspaces | Tue Nov 24 | 1–2 | Done — on GitHub, both PRs merged |
 | WebSocket infrastructure + Messaging | Wed Nov 25 | 3–4 | Done — backend + frontend merged (`3d015d8`), tests + docs complete (see below) |
-| Collaborative documents + Presence | Thu Nov 26 | 5–6 | Documents done (backend + collab server, this branch); presence is a separate slice, not started here |
+| Collaborative documents + Presence | Thu Nov 26 | 5–6 | Done — documents backend + collab server + presence + editor + tests/docs, 5 commits (see below) |
 | Kanban + Notifications + Dashboard + Testing + Delivery | Fri Nov 27 | 7–10 | Not started |
 
 ## Milestones
@@ -395,6 +395,58 @@ Verification (Nov 26, 2026, this worktree):
   exercised the REST + Yjs protocol the editor uses), `docker
   compose up` (containers blocked), and multi-instance fan-out.
 
+### Collaborative documents + Presence — COMPLETE Nov 26, 2026 (5 commits, branch `feature/collaborative-docs`)
+
+All five Day 3 commits, in order (see git log for SHAs):
+
+1. `cd58756` documents: metadata REST, Flyway V3, authorization,
+   DOCUMENT_UPDATED broadcast
+2. `09e9183` collaboration-server: Yjs sync + awareness, JWT and
+   membership auth, update/snapshot persistence
+3. `f3d0446` presence: Redis-backed workspace presence over STOMP
+   and REST (merged in from `feature/presence` as `3f78a72`)
+4. `80cd6bc` collaborative-docs: document management page and TipTap
+   + Yjs editor with awareness, offline persistence, and honest save
+   states
+5. `docs` (this commit): tests + docs alignment, combined live E2E
+
+Final verification on the merged tree (Nov 26, 2026):
+
+- Backend `./mvnw test`: **99/99 pass** (70 Day 2 + 12 presence +
+  17 documents).
+- Frontend `npm run build`: passes (initial 662.86 kB, warning only;
+  editor lazy chunk 545.87 kB). `npm test -- --watch=false`:
+  **72/72 pass** (29 Day 2 + 12 presence + 31 editor/docs).
+- Collab server `npm test`: **6/6 pass**.
+- Combined live two-user E2E (backend :8080 + collab server :3001 +
+  Angular dev server :4200, real Postgres/Redis, one Node probe
+  driving the exact REST + STOMP + Yjs surfaces the editor uses):
+  **20/20 checks pass** — register Ana + Ben + Carol; workspace +
+  invite/accept; document created over REST; member reads 200,
+  non-member 404; both STOMP CONNECT authenticated; PRESENCE_CHANGED
+  online received for both, GET /presence shows both online; both
+  Yjs clients synced (Ana through the :4200 `/collab` proxy, Ben
+  direct to :3001), awareness exchanged (both see Ana + Ben);
+  concurrent edits converge identically to `"Ana was here. Ben was
+  here. "`; Ben disconnects → PRESENCE_CHANGED offline + GET
+  /presence shows Ana online / Ben offline; Carol's collab connection
+  closes with **4401**; a fresh client reloads the converged content
+  from the server; editor + documents-list routes return 200 via
+  :4200. Postgres afterwards held **2 rows in `document_updates`
+  and 1 row in `document_snapshots`** for the document.
+- Probe footgun worth recording: `WebsocketProvider` appends
+  `/<roomname>` to the server URL itself, so the probe must pass the
+  bare collab base (`ws://host/collab`) — passing the document id in
+  the base double-appends it (`/collab/<id>/<id>`), which the
+  server's strict route regex destroys silently and the provider
+  retries forever without syncing. The editor passes the bare base
+  correctly; this was a probe bug only, fixed in the probe script.
+- Not verified live in this VM: a real-browser click-through of the
+  editor, `docker compose up` (containers blocked), multi-instance
+  fan-out, and a rename by another user live-updating the documents
+  list (the page re-reads from REST on open; no STOMP subscription
+  to the documents topic yet).
+
 ## Architecture decisions
 
 - **Modular monolith + dedicated Yjs service.** Spring Boot owns business
@@ -445,14 +497,26 @@ Verification (Nov 26, 2026, this worktree):
   Without them Maven fails with "Non-resolvable parent POM" / SSL
   errors — check these two first. Run backend tests as
   `JAVA_HOME=/home/hatch/.local/jdk21 ./mvnw test` from `backend/`.
-- **The build VM resets between sessions (observed Nov 25, 2026):**
-  PostgreSQL's data directory is wiped (only the `postgres` superuser
-  remains — recreate the `syncspace` user/database with the repo-default
-  password), `/tmp` is cleared (probe scripts, Maven-built state), and
-  `pip` installs disappear (reinstall `websocket-client` for the STOMP
-  probe). Postgres/Redis daemons also stop; restart both before testing.
-  If integration tests fail with "password authentication failed for user
-  syncspace" or "Connection to [::1]:5432 refused", check this first.
+- **The build VM resets between sessions (observed Nov 25 and Nov 26,
+  2026):** PostgreSQL's data directory is wiped (only the `postgres`
+  superuser remains — recreate the `syncspace` user/database with the
+  repo-default password), `/tmp` is cleared (probe scripts, Maven-built
+  state), and `pip` installs disappear (reinstall `websocket-client`
+  for the STOMP probe). The apt installs themselves are also wiped —
+  after a reset, re-run `apt-get update` (the VM's own replay holds
+  the apt lock for several minutes after boot; wait for it to go
+  idle) and reinstall `postgresql-16` and `redis-server` (the replay
+  usually reinstalls them itself from recorded intent — check
+  `pg_lsclusters` / `which redis-server` before installing). Postgres/
+  Redis daemons also stop; restart both before testing. If integration
+  tests fail with "password authentication failed for user syncspace"
+  or "Connection to [::1]:5432 refused", check this first.
+- **Redis must listen on both loopback families.** The backend
+  resolves `localhost` to `::1`, so a Redis started with the default
+  bind (127.0.0.1 only) makes `PresenceIntegrationTest` fail with
+  "member did not read online within 5s". Start it with
+  `redis-server --daemonize yes --bind 127.0.0.1 ::1` (plus
+  `--save '' --appendonly no` for a scratch instance).
 - **Shell footguns in this VM:** `pkill -f <pattern>` matches the calling
   shell's own command line when the pattern text appears later in the same
   command — it SIGTERMs your own shell. Kill by PID (`fuser -k
@@ -473,19 +537,27 @@ Verification (Nov 26, 2026, this worktree):
 - **Whole-family refresh-token revocation on reuse is not implemented** —
   reuse of a revoked token is rejected with 401, but sibling tokens are not
   revoked.
-- **Frontend bundle budget warning:** initial bundle 646 kB vs the 500 kB
-  budget (Angular Material + chat code; was 573 kB on Nov 24). Warning
-  only; the build passes.
+- **Frontend bundle budget warning:** initial bundle 662.86 kB vs the
+  500 kB budget (Angular Material + chat code + presence; the editor
+  itself is lazy-loaded in a separate 545.87 kB chunk). Warning only;
+  the build passes.
+- **A rename by another user does not live-update the documents
+  list** — the page re-reads from REST on open. The backend broadcasts
+  `DOCUMENT_UPDATED`, but no STOMP subscription to the documents topic
+  exists yet.
 - **Live `docker compose up` not verified in this VM** (containers blocked);
   verify on a developer machine before claiming the stack runs end to end.
 - **Multi-instance Redis fan-out not verified live** (needs two backend
   instances; single-instance publish to `syncspace-events` was captured
   with `redis-cli subscribe`, and local broadcast + resume-after-Redis-down
   were verified — see the Nov 25 verification log).
-- **GitHub: foundation + auth + workspaces fully merged Nov 24, 2026.**
-  All 5 commits are on `main` (HEAD `fdeab4cc`), PR #5 and PR #6 merged,
-  issues #1–#4 closed. Note: the connector pushes file snapshots, not git
-  history, so the 5 local commits appear as snapshot commits on GitHub.
+- **GitHub: Day 1 + Day 2 fully merged Nov 24–25, 2026.**
+  All 10 Day 1 + Day 2 commits are on `main` (HEAD `17a6fa67`), PRs #5,
+  #6, #12, #13 merged, issues #1–#4 and #7–#11 closed, 0 open issues.
+  Day 3 (5 commits, branch `feature/collaborative-docs`) is built and
+  verified locally and awaits its push. Note: the connector pushes file
+  snapshots, not git history, so the 5 local commits appear as snapshot
+  commits on GitHub.
 
 ## Verification log
 
@@ -620,3 +692,39 @@ Verification (Nov 26, 2026, this worktree):
     exercised the STOMP + REST surface the UI consumes). Document
     collaborator presence (Yjs awareness) is a different slice and was
     not built here.
+
+- **Nov 26, 2026 — Collaborative documents + Presence complete, combined live E2E.**
+  - Backend `./mvnw test`: **99/99 pass** (70 Day 2 + 12 presence + 17
+    documents). Frontend `npm run build`: passes (initial 662.86 kB,
+    editor lazy chunk 545.87 kB). `npm test`: **72/72 pass** (29 Day 2 +
+    12 presence + 31 editor/docs). Collab server `npm test`: **6/6 pass**.
+  - Combined live two-user E2E (backend :8080 + collab server :3001 +
+    Angular dev server :4200, real Postgres/Redis, one Node probe driving
+    the exact REST + STOMP + Yjs surfaces the editor uses): **20/20
+    checks pass** — register Ana + Ben + Carol; workspace + invite/
+    accept; document created over REST; member reads 200, non-member
+    404; both STOMP CONNECT authenticated; PRESENCE_CHANGED online
+    received for both, GET /presence shows both online; both Yjs
+    clients synced (Ana through the :4200 `/collab` proxy, Ben direct
+    to :3001), awareness exchanged (both see Ana + Ben); concurrent
+    edits converge identically to `"Ana was here. Ben was here. "`;
+    Ben disconnects → PRESENCE_CHANGED offline + GET /presence shows
+    Ana online / Ben offline; Carol's collab connection closes with
+    **4401**; a fresh client reloads the converged content from the
+    server; editor + documents-list routes return 200 via :4200.
+    Postgres afterwards held **2 rows in `document_updates` and 1 row
+    in `document_snapshots`** for the document.
+  - Probe bug found and fixed during this check (not a product bug):
+    the probe passed the document id in the WebsocketProvider base URL,
+    which double-appends it (`/collab/<id>/<id>`); the server's strict
+    route regex destroys such sockets, so the first probe run showed
+    16/20 with all Yjs checks failing. Fixed the probe to pass the bare
+    collab base with `disableBc: true` (so convergence proves server
+    relay, not same-process BroadcastChannel) and re-ran clean 20/20.
+  - Environment during this check: a VM reset mid-slice wiped the apt
+    installs, `/tmp`, and `/root/.m2/settings.xml` again — Postgres 16
+    and Redis reinstalled via apt (the VM replay had already reinstalled
+    them from recorded intent), the `syncspace` user/db recreated,
+    Redis started bound to both 127.0.0.1 and ::1, Maven settings
+    restored from `/home/hatch/.m2/settings.xml`. Recorded in
+    Environment notes above.
