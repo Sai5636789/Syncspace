@@ -29,6 +29,7 @@
     <p>Loading channels…</p>
   } @else {
     <div class="chat-layout">
+      <div class="sidebar">
       <mat-card class="channel-list">
         <mat-card-header>
           <mat-card-title>Channels</mat-card-title>
@@ -76,6 +77,32 @@
           }
         </mat-card-content>
       </mat-card>
+
+      <mat-card class="member-list">
+        <mat-card-header>
+          <mat-card-title>Members</mat-card-title>
+        </mat-card-header>
+        <mat-card-content>
+          @if (displayMembers().length === 0) {
+            <p>No members found.</p>
+          } @else {
+            <ul>
+              @for (member of displayMembers(); track member.userId) {
+                <li>
+                  <span
+                    class="presence-dot"
+                    [attr.data-status]="member.status"
+                    [attr.aria-label]="member.displayName + ' is ' + member.status"
+                  ></span>
+                  <span class="member-name">{{ member.displayName }}</span>
+                  <span class="presence-label">{{ presenceLabel(member) }}</span>
+                </li>
+              }
+            </ul>
+          }
+        </mat-card-content>
+      </mat-card>
+      </div>
 
       <mat-card class="message-panel">
         @if (selectedChannel()) {

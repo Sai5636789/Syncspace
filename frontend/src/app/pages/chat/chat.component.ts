@@ -1,4 +1,4 @@
-import { Component, ElementRef, OnDestroy, OnInit, ViewChild, inject, signal } from '@angular/core';
+import { Component, ElementRef, OnDestroy, OnInit, ViewChild, computed, inject, signal } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { MatBadgeModule } from '@angular/material/badge';
@@ -11,6 +11,7 @@ import { Subscription } from 'rxjs';
 import { ChatService } from '../../core/services/chat.service';
 import { ChatStompService } from '../../core/services/chat-stomp.service';
 import { AuthService } from '../../core/services/auth.service';
+import { PresenceService, formatLastSeen } from '../../core/services/presence.service';
 import { WorkspaceService } from '../../core/services/workspace.service';
 import {
   Channel,
@@ -21,6 +22,7 @@ import {
   MessageUpdatedPayload,
   WsEnvelope,
 } from '../../core/models/chat.model';
+import { PresenceMember } from '../../core/models/presence.model';
 
 /**
  * Team Chat for one workspace: channel sidebar, live message list, composer.
@@ -29,7 +31,10 @@ import {
  * the list is merged by message id and optimistic sends are matched to the
  * server echo by clientMessageId. Own messages can be edited or deleted
  * inline; unread badges clear when a channel is opened or a message lands
- * in the open channel.
+ * in the open channel. The sidebar member list shows live presence: the
+ * roster is seeded from GET /presence and updated by PRESENCE_CHANGED
+ * envelopes while this view is open (heartbeats run for the lifetime of
+ * the STOMP connection).
  */
 @Component({
   selector: 'app-chat',
@@ -51,6 +56,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   private readonly chat = inject(ChatService);
   private readonly stomp = inject(ChatStompService);
   private readonly auth = inject(AuthService);
+  private readonly presenceService = inject(PresenceService);
   private readonly workspaces = inject(WorkspaceService);
   private readonly fb = inject(FormBuilder);
 
@@ -60,6 +66,21 @@ export class ChatComponent implements OnInit, OnDestroy {
   protected readonly workspaceId = signal('');
   protected readonly workspaceName = signal('');
   protected readonly channels = signal<Channel[]>([]);
+  protected readonly members = signal<PresenceMember[]>([]);
+  /**
+   * Member roster with live presence overlaid: the REST snapshot seeds
+   * it, and PRESENCE_CHANGED envelopes (via the stomp presence signal)
+   * update each member's status without another round trip.
+   */
+  protected readonly displayMembers = computed(() => {
+    const live = this.stomp.presence();
+    return this.members().map((member) => {
+      const state = live[member.userId];
+      return state === undefined
+        ? member
+        : { ...member, status: state.status, lastSeenAt: state.lastSeenAt };
+    });
+  });
   protected readonly selectedChannel = signal<Channel | null>(null);
   protected readonly messages = signal<ChatMessageView[]>([]);
   protected readonly loading = signal(true);
@@ -106,6 +127,7 @@ export class ChatComponent implements OnInit, OnDestroy {
       error: () => this.workspaceName.set('Team Chat'),
     });
     this.loadChannels();
+    this.loadMembers();
     this.stomp.connect(workspaceId);
     this.subscriptions.add(
       this.stomp.messageEvents$.subscribe((envelope) => this.handleEnvelope(envelope)),
@@ -118,6 +140,7 @@ export class ChatComponent implements OnInit, OnDestroy {
           this.loadMessages(channel, false);
         }
         this.loadChannels();
+        this.loadMembers();
       }),
     );
   }
@@ -304,6 +327,39 @@ export class ChatComponent implements OnInit, OnDestroy {
 
   protected isOwn(message: ChatMessageView): boolean {
     return this.currentUserId !== null && message.authorId === this.currentUserId;
+  }
+
+  /** "Online" or "Last seen …" for a member — always real presence state, never hardcoded. */
+  protected presenceLabel(member: PresenceMember): string {
+    return member.status === 'online' ? 'Online' : formatLastSeen(member.lastSeenAt);
+  }
+
+  private loadMembers(): void {
+    this.presenceService.listPresence(this.workspaceId()).subscribe({
+      next: (members) => {
+        this.members.set(members);
+        this.stomp.applyPresenceSnapshot(members);
+      },
+      error: () => {
+        // Presence read failed (backend down, stale token): fall back to
+        // the plain member roster, all shown offline with no last-seen.
+        this.workspaces.listMembers(this.workspaceId()).subscribe({
+          next: (roster) =>
+            this.members.set(
+              roster.map((member) => ({
+                userId: member.userId,
+                email: member.email,
+                displayName: member.displayName,
+                role: member.role,
+                joinedAt: member.joinedAt,
+                status: 'offline' as const,
+                lastSeenAt: null,
+              })),
+            ),
+          error: () => this.members.set([]),
+        });
+      },
+    });
   }
 
   protected displayName(message: ChatMessageView): string {

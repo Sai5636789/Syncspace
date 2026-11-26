@@ -123,6 +123,16 @@ OWNER role cannot be granted this way. `200` member.
 Requires OWNER or ADMIN. Cannot remove the OWNER or yourself (use leave).
 An admin cannot remove another admin. `204`.
 
+### GET /workspaces/{workspaceId}/presence
+
+Requires membership. `200` a JSON array of the workspace's members with
+live presence: `{ "userId", "email", "displayName", "role", "joinedAt",
+"status": "online" | "offline", "lastSeenAt" }`. A member is online
+exactly while they hold a live per-session presence key in Redis
+(heartbeat every 15 s, key TTL 45 s); `lastSeenAt` is the last heartbeat
+(or null when never seen). Non-members get `404`. This is the recovery
+source for the presence topic, which only carries changes.
+
 ### POST /workspaces/{workspaceId}/invitations
 
 Requires OWNER or ADMIN. `{ "email": "…", "role": "ADMIN" | "MEMBER" |
@@ -222,6 +232,14 @@ below ADMIN, `404` for an unknown message id.
 - Typing: `/app/workspaces/{workspaceId}/typing` with
   `{ channelId, typing: true | false }` → TYPING_STARTED / TYPING_STOPPED
   on `/topic/workspaces/{workspaceId}/typing` (ephemeral, not persisted).
+- Presence heartbeat: `/app/workspaces/{workspaceId}/presence` with `{}` →
+  PRESENCE_CHANGED (`payload: { userId, status: "online" | "offline",
+  lastSeenAt }`) on `/topic/workspaces/{workspaceId}/presence`, broadcast
+  only when the user's status changes. The client beats every 15 s while a
+  workspace view is open; the server keys presence per STOMP session
+  (Redis TTL 45 s) and marks the user offline on disconnect or TTL
+  expiry. Current state is recovered from
+  `GET /workspaces/{workspaceId}/presence`.
 - Acks: `/app/workspaces/{workspaceId}/ack` with `{ messageId }` →
   a MESSAGE_ACKNOWLEDGED envelope (`payload: { messageId, status:
   "ACKED" }`) on `/user/queue/acknowledgements` (best-effort, not

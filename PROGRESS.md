@@ -422,3 +422,81 @@ Known issues:
     subscriber captures all event types; probe 18/18 again).
   - Not verified live in this VM: multi-instance fan-out (needs two
     backend instances) and `docker compose up` (containers blocked).
+
+- **Nov 26, 2026 — Workspace presence complete (branch `feature/presence`, 1 commit).**
+  - Backend `com.syncspace.presence`: `PresenceService` (Redis per-session
+    presence keys, TTL 45 s, heartbeat every 15 s; one key per STOMP
+    session so closing one tab never takes a user offline while another
+    tab stays open), `PresenceStompController`
+    (`/app/workspaces/{id}/presence`, membership-checked, empty `{}` ping),
+    `PresenceController` (`GET /workspaces/{id}/presence`, membership
+    required, non-members 404), `PresenceDisconnectListener` (fast offline
+    path on `SessionDisconnectEvent`), `PresenceSweeper` (`@Scheduled`
+    every 15 s; safety net for connections that vanish without a disconnect
+    event — broadcasts offline when a key expired, self-heals a stale
+    offline state). Broadcasts go out only on transitions, as
+    `PRESENCE_CHANGED` envelopes (`{userId, status, lastSeenAt}`) on
+    `/topic/workspaces/{id}/presence` via the existing
+    `RealtimeEventPublisher`. Redis failures degrade presence to
+    "unknown/offline", never fail a request; membership is always checked
+    against PostgreSQL first. No Flyway migration — presence is purely
+    ephemeral Redis state. Docs updated: `websocket-events.md`
+    (PRESENCE_CHANGED + destinations now implemented) and
+    `api-contracts.md` (GET /presence + heartbeat destination).
+  - Frontend: `PresenceService` (REST list + `formatLastSeen`),
+    `ChatStompService` now subscribes to the presence topic, keeps a
+    `presence` signal, heartbeats immediately on connect and every 15 s
+    while a workspace view is open, and seeds from a REST snapshot.
+    Chat sidebar gains a Members card (green dot / "Online" / "Last seen …"
+    from real state); dashboard member list shows the same, refreshed
+    from REST every 30 s while a workspace is selected (no STOMP there,
+    so it does not heartbeat itself). No hardcoded online users anywhere.
+  - Backend `./mvnw test`: **82/82 pass** (70 before + 12 new:
+    `PresenceServiceTest` 8 Mockito, `PresenceIntegrationTest` 4 against
+    real Postgres/Redis/STOMP — heartbeat→online, list reflects it,
+    non-member heartbeat rejected with ERROR + 404, one-tab disconnect
+    keeps user online / last-tab disconnect broadcasts offline, TTL expiry
+    simulated by deleting session keys is picked up by the sweep).
+  - Frontend `npm run build`: passes (bundle-budget warning pre-existing,
+    initial total 651 kB; no baseline was measured immediately before this
+    slice, so no claim is made about how much of that is presence code).
+    `npm test -- --watch=false`: **41/41 pass** (29 before + 12
+    new: presence service 5, stomp heartbeat/presence 4, chat member list
+    2, dashboard presence 1).
+  - Live two-user check (backend :8080 + Angular dev server :4200, real
+    Postgres/Redis, raw Python STOMP probe, run twice): **16/16 checks
+    pass** both times — register Ana + Ben, create workspace,
+    invite/accept, both offline before heartbeat, both send heartbeats →
+    GET /presence shows both online with lastSeenAt + PRESENCE_CHANGED
+    online received for both, Ben disconnects → PRESENCE_CHANGED offline
+    received + GET shows Ben offline with lastSeenAt kept and Ana still
+    online, non-member GET /presence → 404. Dev-server proxy verified
+    (`/api/v1/health` through :4200 → ok).
+  - Decisions where the docs were ambiguous: (1) offline detection is
+    BOTH a disconnect listener and a TTL-expiry sweep — the docs only
+    said "expiration marks users offline" without saying how the broadcast
+    happens; keyspace notifications were rejected (needs a Redis server
+    setting this service does not own) in favour of a 15 s sweep over the
+    membership-bounded user sets. (2) Broadcasts fire only on transitions,
+    not per heartbeat, to avoid spamming the topic; late subscribers
+    recover from GET /presence. (3) The frontend heartbeat lives in
+    `ChatStompService` (one STOMP connection per workspace) rather than a
+    second connection, so the presence session id is the chat session id.
+    (4) Dashboard presence is a REST snapshot polled every 30 s, not
+    live STOMP, because that page opens no STOMP connection.
+  - Bug found live and fixed: a REST poll could observe a user online
+    with `lastSeenAt: null` (session key written before the last-seen
+    hash). Fixed by writing the last-seen hash before the session key and
+    falling back to the session key's value in the REST list.
+  - Environment notes: this worktree had no `node_modules` — ran `npm ci`
+    (299 packages). Backend tests need `SPRING_DATASOURCE_PASSWORD=syncspace`
+    in this shell (the DB password is `syncspace`; `application.yml`'s
+    default is a different dev password, so without the env var the
+    context fails auth). Live servers stopped after verification; Redis
+    `presence:*` test keys cleaned up.
+  - Not verified live in this VM: multi-instance fan-out, `docker compose
+    up` (containers blocked), and a real-browser click-through of the
+    member list (presence UI is covered by component tests; the live probe
+    exercised the STOMP + REST surface the UI consumes). Document
+    collaborator presence (Yjs awareness) is a different slice and was
+    not built here.

@@ -3,6 +3,7 @@ import { Client, IMessage, StompSubscription } from '@stomp/stompjs';
 import { Subject, firstValueFrom } from 'rxjs';
 import { AuthService } from './auth.service';
 import { TypingPayload, TypingUser, WsEnvelope } from '../models/chat.model';
+import { PresenceChangedPayload, PresenceMember, PresenceState } from '../models/presence.model';
 
 /** Factory for the underlying STOMP client; overridden in tests with a fake. */
 export const STOMP_CLIENT_FACTORY = new InjectionToken<() => Client>('STOMP_CLIENT_FACTORY', {
@@ -17,6 +18,8 @@ export const RECONNECT_BASE_MS = 1000;
 export const RECONNECT_MAX_MS = 30000;
 /** A typing indicator clears this long after the last TYPING_STARTED without a TYPING_STOPPED. */
 export const TYPING_TIMEOUT_MS = 3000;
+/** Presence heartbeat interval. The server TTL is 45 s, so two missed beats are tolerated. */
+export const PRESENCE_HEARTBEAT_MS = 15000;
 
 /**
  * Delay before reconnect attempt `attempt` (0-based), with up to 25% jitter.
@@ -46,6 +49,8 @@ function newClientMessageId(): string {
  * Any other drop reconnects with exponential backoff; after a reconnect
  * the service re-subscribes and emits `reconnected$` so the UI can recover
  * missed messages from REST. Incoming events are deduplicated by eventId.
+ * While connected, the service heartbeats presence every
+ * PRESENCE_HEARTBEAT_MS and tracks live presence in the `presence` signal.
  */
 @Injectable({ providedIn: 'root' })
 export class ChatStompService {
@@ -56,6 +61,12 @@ export class ChatStompService {
   readonly status = signal<ConnectionStatus>('offline');
   /** Typing users per channel id. Entries expire TYPING_TIMEOUT_MS after the last update. */
   readonly typing = signal<Readonly<Record<string, TypingUser[]>>>({});
+  /**
+   * Live presence per user id, from PRESENCE_CHANGED envelopes on the
+   * workspace presence topic. Seeded from REST by
+   * {@link applyPresenceSnapshot} (the recovery source after a reconnect).
+   */
+  readonly presence = signal<Readonly<Record<string, PresenceState>>>({});
   /** MESSAGE_CREATED / MESSAGE_UPDATED / MESSAGE_DELETED envelopes, deduplicated by eventId. */
   readonly messageEvents$ = new Subject<WsEnvelope>();
   /** Emitted on every successful reconnect, after re-subscribing. */
@@ -67,6 +78,7 @@ export class ChatStompService {
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private typingPruneTimer: ReturnType<typeof setInterval> | null = null;
+  private presenceHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private intentionalDisconnect = false;
   private refreshedForAuthError = false;
   private seenEventIds = new Set<string>();
@@ -92,9 +104,11 @@ export class ChatStompService {
     this.intentionalDisconnect = true;
     this.clearReconnectTimer();
     this.clearTypingPruneTimer();
+    this.clearPresenceHeartbeatTimer();
     this.unsubscribeAll();
     this.typing.set({});
     this.typingExpiry.clear();
+    this.presence.set({});
     const client = this.client;
     this.client = null;
     this.workspaceId = null;
@@ -138,6 +152,36 @@ export class ChatStompService {
       destination: `/app/workspaces/${this.workspaceId}/ack`,
       body: JSON.stringify({ messageId }),
     });
+  }
+
+  /**
+   * Presence heartbeat ping. One ping per connection: the server keys
+   * presence by STOMP session, so closing one tab never takes the user
+   * offline while another tab stays open. No-op while disconnected; the
+   * interval started on connect sends immediately and then every
+   * PRESENCE_HEARTBEAT_MS while the workspace view is open.
+   */
+  sendHeartbeat(): void {
+    if (!this.isConnected || this.workspaceId === null) {
+      return;
+    }
+    this.requireClient().publish({
+      destination: `/app/workspaces/${this.workspaceId}/presence`,
+      body: JSON.stringify({}),
+    });
+  }
+
+  /**
+   * Seeds the presence signal from a REST GET /presence snapshot — the
+   * recovery source after a (re)connect, since the topic only carries
+   * changes, not the current roster.
+   */
+  applyPresenceSnapshot(members: PresenceMember[]): void {
+    const next: Record<string, PresenceState> = {};
+    for (const member of members) {
+      next[member.userId] = { status: member.status, lastSeenAt: member.lastSeenAt };
+    }
+    this.presence.set(next);
   }
 
   private async connectWithToken(): Promise<void> {
@@ -184,6 +228,7 @@ export class ChatStompService {
     this.status.set('connected');
     this.subscribeAll();
     this.startTypingPruneTimer();
+    this.startPresenceHeartbeat();
     if (wasReconnect) {
       this.reconnected$.next();
     }
@@ -244,6 +289,9 @@ export class ChatStompService {
       client.subscribe(`/topic/workspaces/${workspaceId}/typing`, (message) =>
         this.handleTypingFrame(message),
       ),
+      client.subscribe(`/topic/workspaces/${workspaceId}/presence`, (message) =>
+        this.handlePresenceFrame(message),
+      ),
     );
   }
 
@@ -289,6 +337,32 @@ export class ChatStompService {
     }
   }
 
+  private handlePresenceFrame(frame: IMessage): void {
+    let envelope: WsEnvelope<PresenceChangedPayload>;
+    try {
+      envelope = JSON.parse(frame.body) as WsEnvelope<PresenceChangedPayload>;
+    } catch {
+      return;
+    }
+    if (envelope.eventType !== 'PRESENCE_CHANGED') {
+      return;
+    }
+    if (envelope.eventId) {
+      if (this.seenEventIds.has(envelope.eventId)) {
+        return;
+      }
+      this.seenEventIds.add(envelope.eventId);
+    }
+    const payload = envelope.payload;
+    if (!payload?.userId || (payload.status !== 'online' && payload.status !== 'offline')) {
+      return;
+    }
+    this.presence.update((current) => ({
+      ...current,
+      [payload.userId]: { status: payload.status, lastSeenAt: payload.lastSeenAt ?? null },
+    }));
+  }
+
   private addTypingUser(channelId: string, userId: string, displayName: string): void {
     let channelExpiry = this.typingExpiry.get(channelId);
     if (!channelExpiry) {
@@ -320,6 +394,21 @@ export class ChatStompService {
       }
       return next;
     });
+  }
+
+  private startPresenceHeartbeat(): void {
+    this.clearPresenceHeartbeatTimer();
+    // Mark this connection online immediately; the interval keeps the
+    // server-side TTL refreshed while the workspace view stays open.
+    this.sendHeartbeat();
+    this.presenceHeartbeatTimer = setInterval(() => this.sendHeartbeat(), PRESENCE_HEARTBEAT_MS);
+  }
+
+  private clearPresenceHeartbeatTimer(): void {
+    if (this.presenceHeartbeatTimer !== null) {
+      clearInterval(this.presenceHeartbeatTimer);
+      this.presenceHeartbeatTimer = null;
+    }
   }
 
   private startTypingPruneTimer(): void {
@@ -367,6 +456,7 @@ export class ChatStompService {
   /** Drops the client without touching reconnect state or the status signal. */
   private teardownClientOnly(): void {
     this.unsubscribeAll();
+    this.clearPresenceHeartbeatTimer();
     const client = this.client;
     this.client = null;
     if (client) {

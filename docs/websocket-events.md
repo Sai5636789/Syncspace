@@ -50,11 +50,11 @@ Every STOMP message body is JSON with this envelope:
 
 ## Event types
 
-Implemented in the messaging slice: `MESSAGE_CREATED`,
+Implemented: `MESSAGE_CREATED`,
 `MESSAGE_UPDATED`, `MESSAGE_DELETED`, `MESSAGE_SENT`,
-`MESSAGE_ACKNOWLEDGED`, `TYPING_STARTED` / `TYPING_STOPPED`, and
-`ERROR`. The remaining types below are planned — their slices have not
-landed yet, so no server code publishes them.
+`MESSAGE_ACKNOWLEDGED`, `TYPING_STARTED` / `TYPING_STOPPED`,
+`PRESENCE_CHANGED`, `DOCUMENT_UPDATED`, and `ERROR`. The remaining types below are planned
+— their slices have not landed yet, so no server code publishes them.
 
 | Event type | Payload | Meaning |
 | --- | --- | --- |
@@ -67,7 +67,7 @@ landed yet, so no server code publishes them.
 | `TASK_CREATED` | `{ task }` | New task (planned — Kanban slice, not built yet) |
 | `TASK_UPDATED` | `{ task }` | Task edited/moved (payload carries new `version`) (planned — Kanban slice, not built yet) |
 | `TASK_DELETED` | `{ taskId }` | Task removed (planned — Kanban slice, not built yet) |
-| `PRESENCE_CHANGED` | `{ userId, status: "online" \| "offline", lastSeenAt }` | Presence update (planned — documents + presence slice, not built yet) |
+| `PRESENCE_CHANGED` | `{ userId, status: "online" \| "offline", lastSeenAt }` | Presence update (presence slice). Broadcast only on a state transition; a heartbeat refreshes a per-session Redis key (TTL 45 s, client beats every 15 s). Going offline is detected by the STOMP disconnect listener (fast path) and by a 15 s TTL-expiry sweep (safety net for vanished connections). |
 | `DOCUMENT_UPDATED` | `{ documentId, title, updatedAt, version }` | Document metadata changed (content sync is Yjs); broadcast to `/topic/workspaces/{workspaceId}/documents` after the rename commits |
 | `NOTIFICATION_CREATED` | `{ notification }` | New notification for the user (planned — notifications slice, not built yet) |
 | `MEMBER_JOINED` / `MEMBER_LEFT` / `MEMBER_ROLE_CHANGED` | `{ userId, role? }` | Membership change (planned, not built yet) |
@@ -76,24 +76,25 @@ landed yet, so no server code publishes them.
 
 ## Destinations
 
-Application (client → server) — only `chat`, `typing`, and `ack` are
-implemented; `presence` is planned (documents + presence slice):
+Application (client → server) — `chat`, `typing`, `ack`, and
+`presence` are implemented:
 
 ```text
 /app/workspaces/{workspaceId}/chat        send a message (payload: { channelId, clientMessageId, body })
 /app/workspaces/{workspaceId}/typing      typing indicator
 /app/workspaces/{workspaceId}/ack         delivery acknowledgement (payload: { messageId })
-/app/workspaces/{workspaceId}/presence    heartbeat / presence ping (planned, not built yet)
+/app/workspaces/{workspaceId}/presence    heartbeat / presence ping (empty payload `{}`; membership-checked)
 ```
 
-Subscription (server → client) — `/messages`, `/typing`, and
-`/documents` topics are implemented; the others are planned and have no
+Subscription (server → client) — `/messages`, `/typing`, `/presence`,
+and `/documents` topics are implemented; the others are planned and have no
 publisher yet:
 
 ```text
 /topic/workspaces/{workspaceId}/messages
 /topic/workspaces/{workspaceId}/typing
 /topic/workspaces/{workspaceId}/documents
+/topic/workspaces/{workspaceId}/presence     (presence slice: PRESENCE_CHANGED on transitions)
 /topic/workspaces/{workspaceId}/tasks        (planned — Kanban slice)
 /topic/workspaces/{workspaceId}/members      (planned)
 /user/queue/notifications
