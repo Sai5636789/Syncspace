@@ -68,7 +68,7 @@ landed yet, so no server code publishes them.
 | `TASK_UPDATED` | `{ task }` | Task edited/moved (payload carries new `version`) (planned — Kanban slice, not built yet) |
 | `TASK_DELETED` | `{ taskId }` | Task removed (planned — Kanban slice, not built yet) |
 | `PRESENCE_CHANGED` | `{ userId, status: "online" \| "offline", lastSeenAt }` | Presence update (planned — documents + presence slice, not built yet) |
-| `DOCUMENT_UPDATED` | `{ documentId, title, updatedAt, version }` | Document metadata changed (content sync is Yjs) (planned — documents slice, not built yet) |
+| `DOCUMENT_UPDATED` | `{ documentId, title, updatedAt, version }` | Document metadata changed (content sync is Yjs); broadcast to `/topic/workspaces/{workspaceId}/documents` after the rename commits |
 | `NOTIFICATION_CREATED` | `{ notification }` | New notification for the user (planned — notifications slice, not built yet) |
 | `MEMBER_JOINED` / `MEMBER_LEFT` / `MEMBER_ROLE_CHANGED` | `{ userId, role? }` | Membership change (planned, not built yet) |
 | `WORKSPACE_UPDATED` | `{ workspace }` | Workspace renamed / edited (planned, not built yet) |
@@ -86,15 +86,15 @@ implemented; `presence` is planned (documents + presence slice):
 /app/workspaces/{workspaceId}/presence    heartbeat / presence ping (planned, not built yet)
 ```
 
-Subscription (server → client) — `/messages` and `/typing` topics are
-implemented; the others are planned and have no publisher yet:
+Subscription (server → client) — `/messages`, `/typing`, and
+`/documents` topics are implemented; the others are planned and have no
+publisher yet:
 
 ```text
 /topic/workspaces/{workspaceId}/messages
 /topic/workspaces/{workspaceId}/typing
+/topic/workspaces/{workspaceId}/documents
 /topic/workspaces/{workspaceId}/tasks        (planned — Kanban slice)
-/topic/workspaces/{workspaceId}/presence     (planned — documents + presence slice)
-/topic/workspaces/{workspaceId}/documents    (planned — documents slice)
 /topic/workspaces/{workspaceId}/members      (planned)
 /user/queue/notifications
 /user/queue/acknowledgements

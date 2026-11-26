@@ -144,28 +144,36 @@ matches the invitation. Adds the caller as a member with the invited role.
 used, or the caller is already a member, `403` if the invitation was sent
 to a different email address.
 
-## Documents (planned — not built yet; metadata only, content sync is Yjs — see websocket-events.md)
+## Documents (implemented with the documents slice; metadata only, content sync is Yjs — see websocket-events.md)
 
 ### GET /workspaces/{workspaceId}/documents
 
-Requires membership. `200` `{ "documents": [ { "id", "title",
-"createdBy", "updatedAt" } ] }`.
+Requires membership. `200` `{ "documents": [ { "id", "workspaceId",
+"title", "createdBy", "version", "createdAt", "updatedAt" } ] }`.
 
 ### POST /workspaces/{workspaceId}/documents
 
-Requires MEMBER or above. `{ "title": "…" }`. `201` document.
+Requires MEMBER or above. `{ "title": "…" }` (max 200 chars, blank
+rejected with `400`). `201` document. Non-members get `404`
+(workspace existence is not leaked); VIEWER gets `403`.
 
 ### GET /documents/{documentId}
 
-Requires membership of the owning workspace. `200` document + `workspaceId`.
+Requires membership of the owning workspace. `200` document +
+`workspaceId`. A document from another workspace is `404` for the
+caller, even if they belong to that other workspace.
 
 ### PATCH /documents/{documentId}
 
-Requires MEMBER or above. `{ "title": "…" }`. `200` document.
+Requires MEMBER or above. `{ "title": "…" }`. `200` document with the
+incremented optimistic-locking `version`. A `DOCUMENT_UPDATED` event is
+broadcast to `/topic/workspaces/{workspaceId}/documents` after the
+commit. VIEWER gets `403`.
 
 ### DELETE /documents/{documentId}
 
-Requires MEMBER or above. `204`. Deletes metadata, updates, snapshots.
+Requires MEMBER or above. `204`. Deletes metadata, updates, snapshots
+(database cascade).
 
 ## Channels and messages (implemented with the messaging slice)
 
